@@ -689,8 +689,75 @@ static struct option main_options[] = {
 
 int main(int argc, char *argv[])
 {
+	// bt related
 	bdaddr_t bdaddr;
 	int i, opt, ctl, dev_id, show_all = 0;
+
+	// midi related
+	static const char sShortOptions[] = "hVlp:";
+	static const struct option tLongOptions[] = {
+		{"help", 0, NULL, 'h'},
+		{"listVersion", 0, NULL, 'V'},
+		{"list", 0, NULL, 'l'},
+		{"port", 1, NULL, 'p'},
+		{}
+	};
+	int nOpt;
+	snd_seq_t *pSeq = NULL;
+	int nClientID;
+	int nPortCount;
+	int nMyPortID = 0;
+	int nDoList = 0;
+	snd_seq_addr_t *pPorts = NULL;
+
+	nClientID = nInitSeq(&pSeq);
+	if ((nClientID < 0) || (NULL == pSeq)){
+		puts("Initialize sequencer failed.");
+		if (pSeq != NULL){
+			snd_seq_close(pSeq);
+		}
+		return 1;
+	}
+
+	while ((nOpt = getopt_long(argc, argv, sShortOptions, tLongOptions, NULL)) != -1) {
+		switch (nOpt) {
+		case 'h':
+			listUsage(argv[0]);
+			return 0;
+		case 'V':
+			listVersion();
+			return 0;
+		case 'l':
+			nDoList = 1;
+			break;
+		case 'p':
+			nPortCount = nParsePorts(optarg, &pPorts, pSeq);
+			break;
+		default:
+			listUsage(argv[0]);
+			return 1;
+		}
+	}
+
+	if (1 == nDoList) {
+		listPorts(pSeq);
+	} else {
+		if (nPortCount < 1) {
+			printf("Please specify at least one port.");
+			erroExitHandler(pSeq, pPorts, nMyPortID);
+		}
+
+		nMyPortID = pCreateSourcePort(pSeq);
+		if (nMyPortID < 0){
+			erroExitHandler(pSeq, pPorts, nMyPortID);
+		}
+		if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
+			erroExitHandler(pSeq, pPorts, nMyPortID);
+		}
+		nPlayReadyMidi(pSeq, nMyPortID);
+	}
+	// midi ready
+
 
 	bacpy(&bdaddr, BDADDR_ANY);
 

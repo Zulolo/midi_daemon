@@ -190,7 +190,7 @@ static void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int nPortid
 	exit(1);
 }
 
-static int nPlayMidi(snd_seq_t *pSeq, int nMyPortID)
+static int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)
 {
 	snd_seq_event_t tEvent;
 	int i;
@@ -201,30 +201,30 @@ static int nPlayMidi(snd_seq_t *pSeq, int nMyPortID)
     snd_seq_ev_set_direct(&tEvent);
 	snd_seq_ev_set_fixed(&tEvent);
 
-    for (i = 0; i < 80; i++){
-     // set event type, data, so on..
-    tEvent.type = SND_SEQ_EVENT_PGMCHANGE;
-    tEvent.data.control.channel = 0;
-    tEvent.data.control.value = i+1;
-    snd_seq_event_output(pSeq, &tEvent);
-    snd_seq_drain_output(pSeq);
+    for (i = 75; i < 78; i++){
+		 // set event type, data, so on..
+		tEvent.type = SND_SEQ_EVENT_PGMCHANGE;
+		tEvent.data.control.channel = 0;
+		tEvent.data.control.value = i+1;
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
 
-    tEvent.type = SND_SEQ_EVENT_NOTEON;
-    tEvent.data.note.channel = 0;
-    tEvent.data.note.note = 100;
-    tEvent.data.note.velocity = 100;
+		tEvent.type = SND_SEQ_EVENT_NOTEON;
+		tEvent.data.note.channel = 0;
+		tEvent.data.note.note = 100;
+		tEvent.data.note.velocity = 100;
 
-    snd_seq_event_output(pSeq, &tEvent);
-    snd_seq_drain_output(pSeq);
-    usleep(300000);
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
+		usleep(300000);
 
-    tEvent.type = SND_SEQ_EVENT_NOTEOFF;
-    tEvent.data.note.channel = 0;
-    tEvent.data.note.note = 100;
-    tEvent.data.note.velocity = 0;
-    snd_seq_event_output(pSeq, &tEvent);
-    snd_seq_drain_output(pSeq);
-    usleep(300000);
+		tEvent.type = SND_SEQ_EVENT_NOTEOFF;
+		tEvent.data.note.channel = 0;
+		tEvent.data.note.note = 100;
+		tEvent.data.note.velocity = 0;
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
+		usleep(300000);
     }
 
 

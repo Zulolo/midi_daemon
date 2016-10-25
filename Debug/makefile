@@ -8,6 +8,7 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
+-include src/lib/subdir.mk
 -include src/subdir.mk
 -include subdir.mk
 -include objects.mk
@@ -29,7 +30,7 @@ all: midi_daemon
 midi_daemon: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: Cross GCC Linker'
-	arm-linux-gnueabihf-gcc -L/home/zulolo/alsa-lib-1.1.2/lib/lib -o "midi_daemon" $(OBJS) $(USER_OBJS) $(LIBS)
+	arm-linux-gnueabihf-gcc -L/home/zulolo/alsa-lib-1.1.2/lib/lib -L/home/zulolo/workspace -o "midi_daemon" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 

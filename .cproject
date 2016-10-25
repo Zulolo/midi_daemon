@@ -18,7 +18,7 @@
 					<folderInfo id="cdt.managedbuild.config.gnu.cross.exe.debug.2048657952." name="/" resourcePath="">
 						<toolChain id="cdt.managedbuild.toolchain.gnu.cross.exe.debug.521507517" name="Cross GCC" superClass="cdt.managedbuild.toolchain.gnu.cross.exe.debug">
 							<option id="cdt.managedbuild.option.gnu.cross.prefix.160712925" name="Prefix" superClass="cdt.managedbuild.option.gnu.cross.prefix" useByScannerDiscovery="false" value="arm-linux-gnueabihf-" valueType="string"/>
-							<option id="cdt.managedbuild.option.gnu.cross.path.137459880" name="Path" superClass="cdt.managedbuild.option.gnu.cross.path" useByScannerDiscovery="false" value="/home/zulolo/rpi/tools/arm-bcm2708/gcc-linaro-arm-linux-gnueabihf-raspbian-x64/bin" valueType="string"/>
+							<option id="cdt.managedbuild.option.gnu.cross.path.137459880" name="Path" superClass="cdt.managedbuild.option.gnu.cross.path" useByScannerDiscovery="false" value="" valueType="string"/>
 							<targetPlatform archList="all" binaryParser="org.eclipse.cdt.core.ELF" id="cdt.managedbuild.targetPlatform.gnu.cross.1114218178" isAbstract="false" osList="all" superClass="cdt.managedbuild.targetPlatform.gnu.cross"/>
 							<builder buildPath="${workspace_loc:/midi_daemon}/Debug" id="cdt.managedbuild.builder.gnu.cross.309025445" keepEnvironmentInBuildfile="false" managedBuildOn="true" name="Gnu Make Builder" superClass="cdt.managedbuild.builder.gnu.cross"/>
 							<tool id="cdt.managedbuild.tool.gnu.cross.c.compiler.1689916023" name="Cross GCC Compiler" superClass="cdt.managedbuild.tool.gnu.cross.c.compiler">
@@ -26,6 +26,7 @@
 								<option id="gnu.c.compiler.option.debugging.level.1670772479" name="Debug Level" superClass="gnu.c.compiler.option.debugging.level" useByScannerDiscovery="false" value="gnu.c.debugging.level.max" valueType="enumerated"/>
 								<option id="gnu.c.compiler.option.include.paths.1691183873" name="Include paths (-I)" superClass="gnu.c.compiler.option.include.paths" useByScannerDiscovery="false" valueType="includePath">
 									<listOptionValue builtIn="false" value="/home/zulolo/alsa-lib-1.1.2/lib/include"/>
+									<listOptionValue builtIn="false" value="/home/zulolo/workspace"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.c.compiler.input.1382825033" superClass="cdt.managedbuild.tool.gnu.c.compiler.input"/>
 							</tool>
@@ -36,9 +37,11 @@
 							<tool id="cdt.managedbuild.tool.gnu.cross.c.linker.1098843525" name="Cross GCC Linker" superClass="cdt.managedbuild.tool.gnu.cross.c.linker">
 								<option id="gnu.c.link.option.paths.1518841561" name="Library search path (-L)" superClass="gnu.c.link.option.paths" useByScannerDiscovery="false" valueType="libPaths">
 									<listOptionValue builtIn="false" value="/home/zulolo/alsa-lib-1.1.2/lib/lib"/>
+									<listOptionValue builtIn="false" value="/home/zulolo/workspace"/>
 								</option>
 								<option id="gnu.c.link.option.libs.1363705252" name="Libraries (-l)" superClass="gnu.c.link.option.libs" useByScannerDiscovery="false" valueType="libs">
 									<listOptionValue builtIn="false" value="asound"/>
+									<listOptionValue builtIn="false" value="bluetooth"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.c.linker.input.1408500311" superClass="cdt.managedbuild.tool.gnu.c.linker.input">
 									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
