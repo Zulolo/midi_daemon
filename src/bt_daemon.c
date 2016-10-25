@@ -45,7 +45,7 @@
 #include "lib/hci_lib.h"
 #include "lib/rfcomm.h"
 
-#define VERSION		"01.01"
+#include "midi.h"
 
 static int rfcomm_raw_tty = 0;
 static int auth = 0;
@@ -647,8 +647,6 @@ static void usage(void)
 {
 	int i;
 
-	printf("RFCOMM configuration utility ver %s\n", VERSION);
-
 	printf("Usage:\n"
 		"\trfcomm [options] <command> <dev>\n"
 		"\n");
@@ -852,5 +850,14 @@ int main(int argc, char *argv[])
 
 	close(ctl);
 
+	if (pPorts != NULL){
+		free(pPorts);
+	}
+	if (nMyPortID >= 0){
+		snd_seq_delete_port(pSeq, nMyPortID);
+	}
+	if (pSeq != NULL){
+		snd_seq_close(pSeq);
+	}
 	return 0;
 }

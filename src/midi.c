@@ -8,10 +8,10 @@
 #include <unistd.h>
 #include <alsa/asoundlib.h>
 
-#define ALSA_MIDI_STUDY_VERSION_STR		"01.01"
+#define MIDI_DAEMON_VERSION_STR		"01.01"
 
 /* error handling for ALSA functions */
-static int nCheckSnd(const char *operation, int err)
+int nCheckSnd(const char *operation, int err)
 {
 	if (err < 0){
 		printf("Cannot %s - %s", operation, snd_strerror(err));
@@ -20,7 +20,7 @@ static int nCheckSnd(const char *operation, int err)
 	return (0);
 }
 
-static int nInitSeq(snd_seq_t** pSeq)
+int nInitSeq(snd_seq_t** pSeq)
 {
 	int err;
 	int nClientID;
@@ -46,13 +46,13 @@ static int nInitSeq(snd_seq_t** pSeq)
 	return nClientID;
 }
 
-static void listVersion(void)
+void listVersion(void)
 {
-	puts("alsa study midi generator listVersion " ALSA_MIDI_STUDY_VERSION_STR);
+	puts("alsa study midi generator listVersion " MIDI_DAEMON_VERSION_STR);
 }
 
 /* parses one or more port addresses from the string */
-static int nParsePorts(const char* arg, snd_seq_addr_t** pPorts, snd_seq_t *pSeq)
+int nParsePorts(const char* arg, snd_seq_addr_t** pPorts, snd_seq_t *pSeq)
 {
 	char *pBuffer, *pStr, *pPortName;
 	int err;
@@ -93,7 +93,7 @@ static int nParsePorts(const char* arg, snd_seq_addr_t** pPorts, snd_seq_t *pSeq
 	return nPortCount;
 }
 
-static void listPorts(snd_seq_t *pSeq)
+void listPorts(snd_seq_t *pSeq)
 {
 	snd_seq_client_info_t *pClientInfo;
 	snd_seq_port_info_t *pPortInfo;
@@ -129,7 +129,7 @@ static void listPorts(snd_seq_t *pSeq)
 	}
 }
 
-static void listUsage(const char *argv0)
+void listUsage(const char *argv0)
 {
 	printf(
 		"Usage: %s -p client:port[,...] [-d delay] midifile ...\n"
@@ -141,7 +141,7 @@ static void listUsage(const char *argv0)
 		argv0);
 }
 
-static int pCreateSourcePort(snd_seq_t *pSeq)
+int pCreateSourcePort(snd_seq_t *pSeq)
 {
 	int nPortID;
 
@@ -154,7 +154,7 @@ static int pCreateSourcePort(snd_seq_t *pSeq)
 	return nPortID;
 }
 
-static int nConnectPorts(snd_seq_t *pSeq, int nPortCount, snd_seq_addr_t *pPorts)
+int nConnectPorts(snd_seq_t *pSeq, int nPortCount, snd_seq_addr_t *pPorts)
 {
 	int i, err;
 
@@ -176,7 +176,7 @@ static int nConnectPorts(snd_seq_t *pSeq, int nPortCount, snd_seq_addr_t *pPorts
 	return 0;
 }
 
-static void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int nPortid)
+void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int nPortid)
 {
 	if (pPorts != NULL){
 		free(pPorts);
@@ -190,7 +190,7 @@ static void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int nPortid
 	exit(1);
 }
 
-static int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)
+int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)
 {
 	snd_seq_event_t tEvent;
 	int i;
