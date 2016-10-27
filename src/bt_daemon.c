@@ -425,7 +425,8 @@ release:
 	close(sk);
 }
 
-static void cmd_listen(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
+// /dev/rfcomm0 3 /sbin/agetty rfcomm0 115200 linux &
+static void listenBT_Socket(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
 {
 	struct sockaddr_rc laddr, raddr;
 	struct rfcomm_dev_req req;
@@ -591,10 +592,11 @@ release:
 	close(sk);
 }
 
-static void cmd_watch(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
+// /dev/rfcomm0 3 /sbin/agetty rfcomm0 115200 linux &
+static void watchBT_Socket(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
 {
 	while (!__io_canceled) {
-		cmd_listen(ctl, dev, bdaddr, argc, argv);
+		listenBT_Socket(ctl, dev, bdaddr, argc, argv);
 		usleep(10000);
 	}
 }
@@ -638,8 +640,8 @@ struct {
 	{ "release", "unbind", cmd_release, "<dev>",                    "Release device" },
 	{ "show",    "info",   cmd_show,    "<dev>",                    "Show device"    },
 	{ "connect", "conn",   cmd_connect, "<dev> <bdaddr> [channel]", "Connect device" },
-	{ "listen",  "server", cmd_listen,  "<dev> [channel [cmd]]",    "Listen"         },
-	{ "watch",   "watch",  cmd_watch,   "<dev> [channel [cmd]]",    "Watch"          },
+	{ "listen",  "server", listenBT_Socket,  "<dev> [channel [cmd]]",    "Listen"         },
+	{ "watch",   "watch",  watchBT_Socket,   "<dev> [channel [cmd]]",    "Watch"          },
 	{ NULL, NULL, NULL, 0, 0 }
 };
 
@@ -688,8 +690,8 @@ static struct option main_options[] = {
 int main(int argc, char *argv[])
 {
 	// bt related
-	bdaddr_t bdaddr;
-	int i, opt, ctl, dev_id, show_all = 0;
+	bdaddr_t tBD_Addr;
+	int nCtrlSocket, nDevID;
 
 	// midi related
 	static const char sShortOptions[] = "hVlp:";
@@ -756,99 +758,18 @@ int main(int argc, char *argv[])
 	}
 	// midi ready
 
+	bacpy(&tBD_Addr, BDADDR_ANY);
 
-	bacpy(&bdaddr, BDADDR_ANY);
-
-	while ((opt = getopt_long(argc, argv, "+i:rahAESML:", main_options, NULL)) != -1) {
-		switch(opt) {
-		case 'i':
-			if (strncmp(optarg, "hci", 3) == 0)
-				hci_devba(atoi(optarg + 3), &bdaddr);
-			else
-				str2ba(optarg, &bdaddr);
-			break;
-
-		case 'r':
-			rfcomm_raw_tty = 1;
-			break;
-
-		case 'a':
-			show_all = 1;
-			break;
-
-		case 'h':
-			usage();
-			exit(0);
-
-		case 'A':
-			auth = 1;
-			break;
-
-		case 'E':
-			encryption = 1;
-			break;
-
-		case 'S':
-			secure = 1;
-			break;
-
-		case 'M':
-			master = 1;
-			break;
-
-		case 'L':
-			linger = atoi(optarg);
-			break;
-
-		default:
-			exit(0);
-		}
-	}
-
-	argc -= optind;
-	argv += optind;
-	optind = 0;
-
-	if (argc < 2) {
-		if (argc != 0) {
-			usage();
-			exit(1);
-		} else
-			show_all = 1;
-	}
-
-	ctl = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_RFCOMM);
-	if (ctl < 0) {
+	nCtrlSocket = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_RFCOMM);
+	if (nCtrlSocket < 0) {
 		perror("Can't open RFCOMM control socket");
 		exit(1);
 	}
 
-	if (show_all) {
-		print_dev_list(ctl, 0);
-		close(ctl);
-		exit(0);
-	}
+	nDevID = 0;
 
-	if (strncmp(argv[1], "/dev/rfcomm", 11) == 0)
-		dev_id = atoi(argv[1] + 11);
-	else if (strncmp(argv[1], "rfcomm", 6) == 0)
-		dev_id = atoi(argv[1] + 6);
-	else
-		dev_id = atoi(argv[1]);
-
-	for (i = 0; command[i].cmd; i++) {
-		if (strncmp(command[i].cmd, argv[0], 4) && strncmp(command[i].alt, argv[0], 4))
-			continue;
-		argc--;
-		argv++;
-		command[i].func(ctl, dev_id, &bdaddr, argc, argv);
-		close(ctl);
-		exit(0);
-	}
-
-	usage();
-
-	close(ctl);
+	watchBT_Socket(nCtrlSocket, nDevID, &tBD_Addr, argc, argv);
+	close(nCtrlSocket);
 
 	if (pPorts != NULL){
 		free(pPorts);
@@ -859,5 +780,5 @@ int main(int argc, char *argv[])
 	if (pSeq != NULL){
 		snd_seq_close(pSeq);
 	}
-	return 0;
+	exit(0);
 }
