@@ -47,26 +47,10 @@
 
 #include "midi.h"
 
-static int rfcomm_raw_tty = 0;
-static int auth = 0;
-static int encryption = 0;
-static int secure = 0;
-static int master = 0;
-static int linger = 0;
+#define MAX_CLIENT_SOCKET_CNT			10
+#define EMPTY_PID						((pid_t)0)
 
-static char *rfcomm_state[] = {
-	"unknown",
-	"connected",
-	"clean",
-	"bound",
-	"listening",
-	"connecting",
-	"connecting",
-	"config",
-	"disconnecting",
-	"closed"
-};
-
+static pid_t tChildPID_List[MAX_CLIENT_SOCKET_CNT];
 static volatile sig_atomic_t __io_canceled = 0;
 
 static void sig_hup(int sig)
@@ -79,602 +63,95 @@ static void sig_term(int sig)
 	__io_canceled = 1;
 }
 
-static char *rfcomm_flagstostr(uint32_t flags)
+int setClientOffDuty(pid_t pChildPID_List, int nPID_ListLen, pid_t tPID)
 {
-	static char str[100];
-	str[0] = 0;
-
-	strcat(str, "[");
-
-	if (flags & (1 << RFCOMM_REUSE_DLC))
-		strcat(str, "reuse-dlc ");
-
-	if (flags & (1 << RFCOMM_RELEASE_ONHUP))
-		strcat(str, "release-on-hup ");
-
-	if (flags & (1 << RFCOMM_TTY_ATTACHED))
-		strcat(str, "tty-attached");
-
-	strcat(str, "]");
-	return str;
-}
-
-static void print_dev_info(struct rfcomm_dev_info *di)
-{
-	char src[18], dst[18], addr[40];
-
-	ba2str(&di->src, src); ba2str(&di->dst, dst);
-
-	if (bacmp(&di->src, BDADDR_ANY) == 0)
-		sprintf(addr, "%s", dst);
-	else
-		sprintf(addr, "%s -> %s", src, dst);
-
-	printf("rfcomm%d: %s channel %d %s %s\n",
-		di->id, addr, di->channel,
-		rfcomm_state[di->state],
-		di->flags ? rfcomm_flagstostr(di->flags) : "");
-}
-
-static void print_dev_list(int ctl, int flags)
-{
-	struct rfcomm_dev_list_req *dl;
-	struct rfcomm_dev_info *di;
-	int i;
-
-	dl = malloc(sizeof(*dl) + RFCOMM_MAX_DEV * sizeof(*di));
-	if (!dl) {
-		perror("Can't allocate memory");
-		exit(1);
-	}
-
-	dl->dev_num = RFCOMM_MAX_DEV;
-	di = dl->dev_info;
-
-	if (ioctl(ctl, RFCOMMGETDEVLIST, (void *) dl) < 0) {
-		perror("Can't get device list");
-		free(dl);
-		exit(1);
-	}
-
-	for (i = 0; i < dl->dev_num; i++)
-		print_dev_info(di + i);
-	free(dl);
-}
-
-static int create_dev(int ctl, int dev, uint32_t flags, bdaddr_t *bdaddr, int argc, char **argv)
-{
-	struct rfcomm_dev_req req;
-	int err;
-
-	memset(&req, 0, sizeof(req));
-	req.dev_id = dev;
-	req.flags = flags;
-	bacpy(&req.src, bdaddr);
-
-	if (argc < 2) {
-		fprintf(stderr, "Missing dev parameter");
-		return -EINVAL;
-	}
-
-	str2ba(argv[1], &req.dst);
-
-	if (argc > 2)
-		req.channel = atoi(argv[2]);
-	else
-		req.channel = 1;
-
-	err = ioctl(ctl, RFCOMMCREATEDEV, &req);
-	if (err == -1) {
-		err = -errno;
-
-		if (err == -EOPNOTSUPP)
-			fprintf(stderr, "RFCOMM TTY support not available\n");
-		else
-			perror("Can't create device");
-	}
-
-	return err;
-}
-
-static int release_dev(int ctl, int dev, uint32_t flags)
-{
-	struct rfcomm_dev_req req;
-	int err;
-
-	memset(&req, 0, sizeof(req));
-	req.dev_id = dev;
-
-	err = ioctl(ctl, RFCOMMRELEASEDEV, &req);
-	if (err < 0)
-		perror("Can't release device");
-
-	return err;
-}
-
-static int release_all(int ctl)
-{
-	struct rfcomm_dev_list_req *dl;
-	struct rfcomm_dev_info *di;
-	int i;
-
-	dl = malloc(sizeof(*dl) + RFCOMM_MAX_DEV * sizeof(*di));
-	if (!dl) {
-		perror("Can't allocate memory");
-		exit(1);
-	}
-
-	dl->dev_num = RFCOMM_MAX_DEV;
-	di = dl->dev_info;
-
-	if (ioctl(ctl, RFCOMMGETDEVLIST, (void *) dl) < 0) {
-		perror("Can't get device list");
-		free(dl);
-		exit(1);
-	}
-
-	for (i = 0; i < dl->dev_num; i++)
-		release_dev(ctl, (di + i)->id, 0);
-
-	free(dl);
-	return 0;
-}
-
-static void run_cmdline(struct pollfd *p, sigset_t *sigs, char *devname,
-			int argc, char **argv)
-{
-	int i;
-	pid_t pid;
-	char **cmdargv;
-
-	cmdargv = malloc((argc + 1) * sizeof(char *));
-	if (!cmdargv)
-		return;
-
-	for (i = 0; i < argc; i++)
-		cmdargv[i] = (strcmp(argv[i], "{}") == 0) ? devname : argv[i];
-	cmdargv[i] = NULL;
-
-	pid = fork();
-
-	switch (pid) {
-	case 0:
-		i = execvp(cmdargv[0], cmdargv);
-		fprintf(stderr, "Couldn't execute command %s (errno=%d:%s)\n",
-				cmdargv[0], errno, strerror(errno));
-		break;
-	case -1:
-		fprintf(stderr, "Couldn't fork to execute command %s\n",
-				cmdargv[0]);
-		break;
-	default:
-		while (1) {
-			int status;
-			pid_t child;
-			struct timespec ts;
-
-			child = waitpid(-1, &status, WNOHANG);
-			if (child == pid || (child < 0 && errno != EAGAIN))
-				break;
-
-			p->revents = 0;
-			ts.tv_sec  = 0;
-			ts.tv_nsec = 200;
-			if (ppoll(p, 1, &ts, sigs) || __io_canceled) {
-				kill(pid, SIGTERM);
-				waitpid(pid, &status, 0);
-				break;
-			}
+	while (nPID_ListLen > 0){
+		nPID_ListLen--;
+		if (tPID == pChildPID_List[nPID_ListLen]){
+			pChildPID_List[nPID_ListLen] = EMPTY_PID;
+			return 0;
 		}
-		break;
 	}
-
-	free(cmdargv);
+	return (-1);
 }
 
-static void cmd_connect(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
+int setClientOnDuty(pid_t pChildPID_List, int nPID_ListLen, pid_t tPID)
 {
-	struct sockaddr_rc laddr, raddr;
-	struct rfcomm_dev_req req;
-	struct termios ti;
-	struct sigaction sa;
-	struct pollfd p;
-	sigset_t sigs;
-	socklen_t alen;
-	char dst[18], devname[MAXPATHLEN];
-	int sk, fd, try = 30;
-
-	laddr.rc_family = AF_BLUETOOTH;
-	bacpy(&laddr.rc_bdaddr, bdaddr);
-	laddr.rc_channel = 0;
-
-	if (argc < 2) {
-		fprintf(stderr, "Missing dev parameter");
-		return;
+	while (nPID_ListLen > 0){
+		nPID_ListLen--;
+		if (EMPTY_PID == pChildPID_List[nPID_ListLen]){
+			pChildPID_List[nPID_ListLen] = tPID;
+			return 0;
+		}
 	}
+	return (-1);
+}
 
-	raddr.rc_family = AF_BLUETOOTH;
-	str2ba(argv[1], &raddr.rc_bdaddr);
-
-	if (argc > 2)
-		raddr.rc_channel = atoi(argv[2]);
-	else
-		raddr.rc_channel = 1;
-
-	sk = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
-	if (sk < 0) {
-		perror("Can't create RFCOMM socket");
-		return;
+int isAllClientProcessExit(pid_t pChildPID_List, int nPID_ListLen)
+{
+	while (nPID_ListLen > 0){
+		nPID_ListLen--;
+		if (EMPTY_PID != pChildPID_List[nPID_ListLen]){
+			return 0;
+		}
 	}
+	return 1;
+}
 
-	if (linger) {
-		struct linger l = { .l_onoff = 1, .l_linger = linger };
-
-		if (setsockopt(sk, SOL_SOCKET, SO_LINGER, &l, sizeof(l)) < 0) {
-			perror("Can't set linger option");
-			return;
+void killAllClientProcess(pid_t pChildPID_List, int nPID_ListLen)
+{
+	int nLen = nPID_ListLen;
+	while (nPID_ListLen > 0){
+		nPID_ListLen--;
+		if (EMPTY_PID != pChildPID_List[nPID_ListLen]){
+			kill(pChildPID_List[nPID_ListLen], SIGINT);
 		}
 	}
 
-	if (bind(sk, (struct sockaddr *) &laddr, sizeof(laddr)) < 0) {
-		perror("Can't bind RFCOMM socket");
-		close(sk);
-		return;
+	while (isAllClientProcessExit(pChildPID_List, nLen)){
+		usleep(100000);
 	}
+}
 
-	if (connect(sk, (struct sockaddr *) &raddr, sizeof(raddr)) < 0) {
-		perror("Can't connect RFCOMM socket");
-		close(sk);
-		return;
+static void sig_chld(int signo)
+{
+	pid_t   tPID;
+	int     nStat;
+
+	while((tPID = waitpid(-1, &nStat, WNOHANG)) > 0){
+		setClientOffDuty(tChildPID_List, MAX_CLIENT_SOCKET_CNT, tPID);
 	}
-
-	alen = sizeof(laddr);
-	if (getsockname(sk, (struct sockaddr *)&laddr, &alen) < 0) {
-		perror("Can't get RFCOMM socket name");
-		close(sk);
-		return;
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.dev_id = dev;
-	req.flags = (1 << RFCOMM_REUSE_DLC) | (1 << RFCOMM_RELEASE_ONHUP);
-
-	bacpy(&req.src, &laddr.rc_bdaddr);
-	bacpy(&req.dst, &raddr.rc_bdaddr);
-	req.channel = raddr.rc_channel;
-
-	dev = ioctl(sk, RFCOMMCREATEDEV, &req);
-	if (dev < 0) {
-		perror("Can't create RFCOMM TTY");
-		close(sk);
-		return;
-	}
-
-	snprintf(devname, MAXPATHLEN - 1, "/dev/rfcomm%d", dev);
-	while ((fd = open(devname, O_RDONLY | O_NOCTTY)) < 0) {
-		if (errno == EACCES) {
-			perror("Can't open RFCOMM device");
-			goto release;
-		}
-
-		snprintf(devname, MAXPATHLEN - 1, "/dev/bluetooth/rfcomm/%d", dev);
-		if ((fd = open(devname, O_RDONLY | O_NOCTTY)) < 0) {
-			if (try--) {
-				snprintf(devname, MAXPATHLEN - 1, "/dev/rfcomm%d", dev);
-				usleep(100 * 1000);
-				continue;
-			}
-			perror("Can't open RFCOMM device");
-			goto release;
-		}
-	}
-
-	if (rfcomm_raw_tty) {
-		tcflush(fd, TCIOFLUSH);
-
-		cfmakeraw(&ti);
-		tcsetattr(fd, TCSANOW, &ti);
-	}
-
-	close(sk);
-
-	ba2str(&req.dst, dst);
-	printf("Connected %s to %s on channel %d\n", devname, dst, req.channel);
-	printf("Press CTRL-C for hangup\n");
-
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_flags   = SA_NOCLDSTOP;
-	sa.sa_handler = SIG_IGN;
-	sigaction(SIGCHLD, &sa, NULL);
-	sigaction(SIGPIPE, &sa, NULL);
-
-	sa.sa_handler = sig_term;
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGINT,  &sa, NULL);
-
-	sa.sa_handler = sig_hup;
-	sigaction(SIGHUP, &sa, NULL);
-
-	sigfillset(&sigs);
-	sigdelset(&sigs, SIGCHLD);
-	sigdelset(&sigs, SIGPIPE);
-	sigdelset(&sigs, SIGTERM);
-	sigdelset(&sigs, SIGINT);
-	sigdelset(&sigs, SIGHUP);
-
-	p.fd = fd;
-	p.events = POLLERR | POLLHUP;
-
-	while (!__io_canceled) {
-		p.revents = 0;
-		if (ppoll(&p, 1, NULL, &sigs) > 0)
-			break;
-	}
-
-	printf("Disconnected\n");
-
-	close(fd);
 	return;
-
-release:
-	memset(&req, 0, sizeof(req));
-	req.dev_id = dev;
-	req.flags = (1 << RFCOMM_HANGUP_NOW);
-	ioctl(ctl, RFCOMMRELEASEDEV, &req);
-
-	close(sk);
 }
 
-// /dev/rfcomm0 3 /sbin/agetty rfcomm0 115200 linux &
-static void listenBT_Socket(int nCtrlSocket, int nDevID, bdaddr_t *pBD_Addr, int argc, char **argv)
+static void clientService(int nSporeSocket)
 {
-	struct sockaddr_rc tLocalAddr, tRemoteAddr;
-	struct rfcomm_dev_req tRFCOMM_DevReq;
-	struct termios ti;
-	struct sigaction sa;
-	struct pollfd p;
-	sigset_t sigs;
-	socklen_t tAddrLen;
-	char dst[18], devname[MAXPATHLEN];
-	int nServerSocket, nSporeSocket, fd, nLinkMode, try = 30;
+	struct sigaction tSignalAction;
+	int nBytesRead;
 
-	tLocalAddr.rc_family = AF_BLUETOOTH;
-	bacpy(&tLocalAddr.rc_bdaddr, pBD_Addr);
-	tLocalAddr.rc_channel = 1;	//(argc < 2) ? 1 : atoi(argv[1]);
+	memset(&tSignalAction, 0, sizeof(tSignalAction));
+	tSignalAction.sa_handler = sig_term;
+	sigaction(SIGINT,  &tSignalAction, NULL);
 
-	nServerSocket = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
-	if (nServerSocket < 0) {
-		perror("Can't create RFCOMM socket");
-		return;
-	}
-
-	nLinkMode = 0;
-
-	if (setsockopt(nServerSocket, SOL_RFCOMM, RFCOMM_LM, &nLinkMode, sizeof(nLinkMode)) < 0) {
-		perror("Can't set RFCOMM link mode");
-		close(nServerSocket);
-		return;
-	}
-
-	if (bind(nServerSocket, (struct sockaddr *)&tLocalAddr, sizeof(tLocalAddr)) < 0) {
-		perror("Can't bind RFCOMM socket");
-		close(nServerSocket);
-		return;
-	}
-
-	printf("Waiting for connection on channel %d\n", tLocalAddr.rc_channel);
-
-	listen(nServerSocket, 10);
-
-	tAddrLen = sizeof(tRemoteAddr);
-	nSporeSocket = accept(nServerSocket, (struct sockaddr *) &tRemoteAddr, &tAddrLen);
-
-	tAddrLen = sizeof(tLocalAddr);
-	if (getsockname(nSporeSocket, (struct sockaddr *)&tLocalAddr, &tAddrLen) < 0) {
-		perror("Can't get RFCOMM socket name");
-		close(nSporeSocket);
-		return;
-	}
-
-	memset(&tRFCOMM_DevReq, 0, sizeof(tRFCOMM_DevReq));
-	tRFCOMM_DevReq.dev_id = nDevID;
-	tRFCOMM_DevReq.flags = (1 << RFCOMM_REUSE_DLC) | (1 << RFCOMM_RELEASE_ONHUP);
-
-	bacpy(&tRFCOMM_DevReq.src, &tLocalAddr.rc_bdaddr);
-	bacpy(&tRFCOMM_DevReq.dst, &tRemoteAddr.rc_bdaddr);
-	tRFCOMM_DevReq.channel = tRemoteAddr.rc_channel;
-
-	nDevID = ioctl(nSporeSocket, RFCOMMCREATEDEV, &tRFCOMM_DevReq);
-	if (nDevID < 0) {
-		perror("Can't create RFCOMM TTY");
-		close(nServerSocket);
-		return;
-	}
-
-	snprintf(devname, MAXPATHLEN - 1, "/dev/rfcomm%d", nDevID);
-	while ((fd = open(devname, O_RDONLY | O_NOCTTY)) < 0) {
-		if (errno == EACCES) {
-			perror("Can't open RFCOMM device");
-			goto release;
-		}
-
-		snprintf(devname, MAXPATHLEN - 1, "/dev/bluetooth/rfcomm/%d", nDevID);
-		if ((fd = open(devname, O_RDONLY | O_NOCTTY)) < 0) {
-			if (try--) {
-				snprintf(devname, MAXPATHLEN - 1, "/dev/rfcomm%d", nDevID);
-				usleep(100 * 1000);
-				continue;
-			}
-			perror("Can't open RFCOMM device");
-			goto release;
+	while(!__io_canceled){
+		nBytesRead = recv(nSporeSocket , buf , sizeof(buf) , 0);
+		if( bytes_read > 0 ) {
+			printf( "received [%s]\n" , buf ) ;
 		}
 	}
-
-	if (rfcomm_raw_tty) {
-		tcflush(fd, TCIOFLUSH);
-
-		cfmakeraw(&ti);
-		tcsetattr(fd, TCSANOW, &ti);
-	}
-
-	close(nServerSocket);
-	close(nSporeSocket);
-
-	ba2str(&tRFCOMM_DevReq.dst, dst);
-	printf("Connection from %s to %s\n", dst, devname);
-	printf("Press CTRL-C for hangup\n");
-
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_flags   = SA_NOCLDSTOP;
-	sa.sa_handler = SIG_IGN;
-	sigaction(SIGCHLD, &sa, NULL);
-	sigaction(SIGPIPE, &sa, NULL);
-
-	sa.sa_handler = sig_term;
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGINT,  &sa, NULL);
-
-	sa.sa_handler = sig_hup;
-	sigaction(SIGHUP, &sa, NULL);
-
-	sigfillset(&sigs);
-	sigdelset(&sigs, SIGCHLD);
-	sigdelset(&sigs, SIGPIPE);
-	sigdelset(&sigs, SIGTERM);
-	sigdelset(&sigs, SIGINT);
-	sigdelset(&sigs, SIGHUP);
-
-	p.fd = fd;
-	p.events = POLLERR | POLLHUP;
-
-	if (argc <= 2) {
-		while (!__io_canceled) {
-			p.revents = 0;
-			if (ppoll(&p, 1, NULL, &sigs) > 0)
-				break;
-		}
-	} else
-		run_cmdline(&p, &sigs, devname, argc - 2, argv + 2);
-
-	sa.sa_handler = NULL;
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGINT,  &sa, NULL);
-
-	printf("Disconnected\n");
-
-	close(fd);
-	return;
-
-release:
-	memset(&tRFCOMM_DevReq, 0, sizeof(tRFCOMM_DevReq));
-	tRFCOMM_DevReq.dev_id = nDevID;
-	tRFCOMM_DevReq.flags = (1 << RFCOMM_HANGUP_NOW);
-	ioctl(nCtrlSocket, RFCOMMRELEASEDEV, &tRFCOMM_DevReq);
-
-	close(nServerSocket);
+	exit(0);
 }
 
-// /dev/rfcomm0 3 /sbin/agetty rfcomm0 115200 linux &
-static void watchBT_Socket(int nCtrlSocket, int nDevID, bdaddr_t *pBD_Addr, int argc, char **argv)
-{
-	while (!__io_canceled) {
-		listenBT_Socket(nCtrlSocket, nDevID, pBD_Addr, argc, argv);
-		usleep(10000);
-	}
-}
-
-static void cmd_create(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
-{
-	create_dev(ctl, dev, 0, bdaddr, argc, argv);
-}
-
-static void cmd_release(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
-{
-	if (strcmp(argv[0], "all") == 0)
-		release_all(ctl);
-	else
-		release_dev(ctl, dev, 0);
-}
-
-static void cmd_show(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
-{
-	if (strcmp(argv[0], "all") == 0)
-		print_dev_list(ctl, 0);
-	else {
-		struct rfcomm_dev_info di = { .id = atoi(argv[0]) };
-		if (ioctl(ctl, RFCOMMGETDEVINFO, &di) < 0) {
-			perror("Get info failed");
-			exit(1);
-		}
-
-		print_dev_info(&di);
-	}
-}
-
-struct {
-	char *cmd;
-	char *alt;
-	void (*func)(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv);
-	char *opt;
-	char *doc;
-} command[] = {
-	{ "bind",    "create", cmd_create,  "<dev> <bdaddr> [channel]", "Bind device"    },
-	{ "release", "unbind", cmd_release, "<dev>",                    "Release device" },
-	{ "show",    "info",   cmd_show,    "<dev>",                    "Show device"    },
-	{ "connect", "conn",   cmd_connect, "<dev> <bdaddr> [channel]", "Connect device" },
-	{ "listen",  "server", listenBT_Socket,  "<dev> [channel [cmd]]",    "Listen"         },
-	{ "watch",   "watch",  watchBT_Socket,   "<dev> [channel [cmd]]",    "Watch"          },
-	{ NULL, NULL, NULL, 0, 0 }
-};
-
-static void usage(void)
-{
-	int i;
-
-	printf("Usage:\n"
-		"\trfcomm [options] <command> <dev>\n"
-		"\n");
-
-	printf("Options:\n"
-		"\t-i, --device [hciX|bdaddr]     Local HCI device or BD Address\n"
-		"\t-h, --help                     Display help\n"
-		"\t-r, --raw                      Switch TTY into raw mode\n"
-		"\t-A, --auth                     Enable authentication\n"
-		"\t-E, --encrypt                  Enable encryption\n"
-		"\t-S, --secure                   Secure connection\n"
-		"\t-M, --master                   Become the master of a piconet\n"
-		"\t-L, --linger [seconds]         Set linger timeout\n"
-		"\t-a                             Show all devices (default)\n"
-		"\n");
-
-	printf("Commands:\n");
-	for (i = 0; command[i].cmd; i++)
-		printf("\t%-8s %-24s\t%s\n",
-			command[i].cmd,
-			command[i].opt ? command[i].opt : " ",
-			command[i].doc);
-	printf("\n");
-}
-
-static struct option main_options[] = {
-	{ "help",	0, 0, 'h' },
-	{ "device",	1, 0, 'i' },
-	{ "config",	1, 0, 'f' },
-	{ "raw",	0, 0, 'r' },
-	{ "auth",	0, 0, 'A' },
-	{ "encrypt",	0, 0, 'E' },
-	{ "secure",	0, 0, 'S' },
-	{ "master",	0, 0, 'M' },
-	{ "linger",	1, 0, 'L' },
-	{ 0, 0, 0, 0 }
-};
-
-// rfcomm watch /dev/rfcomm0 3 /sbin/agetty rfcomm0 115200 linux &
 int main(int argc, char *argv[])
 {
+	struct sigaction tSignalAction;
+
 	// bt related
 	bdaddr_t tBD_Addr;
-	int nCtrlSocket, nDevID;
+	int nServerSocket, nSporeSocket, tPID;
+	struct sockaddr_rc tLocalAddr, tRemoteAddr;
+	socklen_t tAddrLen;
+	char cDst[18];
 
 	// midi related
 	static const char sShortOptions[] = "hVlp:";
@@ -692,6 +169,13 @@ int main(int argc, char *argv[])
 	int nMyPortID = 0;
 	int nDoList = 0;
 	snd_seq_addr_t *pPorts = NULL;
+
+	memset(&tSignalAction, 0, sizeof(tSignalAction));
+	tSignalAction.sa_handler = sig_chld;
+	sigaction(SIGCHLD, &tSignalAction, NULL);
+
+	tSignalAction.sa_handler = sig_term;
+	sigaction(SIGINT,  &tSignalAction, NULL);
 
 	nClientID = nInitSeq(&pSeq);
 	if ((nClientID < 0) || (NULL == pSeq)){
@@ -743,16 +227,45 @@ int main(int argc, char *argv[])
 
 	bacpy(&tBD_Addr, BDADDR_ANY);
 
-	nCtrlSocket = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_RFCOMM);
-	if (nCtrlSocket < 0) {
+	tLocalAddr.rc_family = AF_BLUETOOTH;
+	bacpy(&tLocalAddr.rc_bdaddr, &tBD_Addr);
+	tLocalAddr.rc_channel = 1;	//(argc < 2) ? 1 : atoi(argv[1]);
+
+	nServerSocket = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
+	if (nServerSocket < 0) {
 		perror("Can't open RFCOMM control socket");
-		exit(1);
+		erroExitHandler(pSeq, pPorts, nMyPortID);
 	}
 
-	nDevID = 0;
+	if (bind(nServerSocket, (struct sockaddr *)&tLocalAddr, sizeof(tLocalAddr)) < 0) {
+		perror("Can't bind RFCOMM socket");
+		close(nServerSocket);
+		erroExitHandler(pSeq, pPorts, nMyPortID);
+	}
 
-	watchBT_Socket(nCtrlSocket, nDevID, &tBD_Addr, argc, argv);
-	close(nCtrlSocket);
+	listen(nServerSocket, MAX_CLIENT_SOCKET_CNT);
+	puts("Waiting for connection from client...");
+	tAddrLen = sizeof(tRemoteAddr);
+	while(!__io_canceled){
+		nSporeSocket = accept(nServerSocket, (struct sockaddr *) &tRemoteAddr, &tAddrLen);
+		ba2str(&(tRemoteAddr.rc_bdaddr), cDst);
+		printf("Client %s connected.\n", cDst);
+		tPID = fork();
+		if (tPID < 0 ){
+			close(nServerSocket);
+			killAllClientProcess(tChildPID_List, MAX_CLIENT_SOCKET_CNT);
+			erroExitHandler(pSeq, pPorts, nMyPortID);
+		}else if (0 == tPID){
+			// Child process
+			clientService(nSporeSocket);
+		}else{
+			// Parent process
+			setClientOnDuty(tChildPID_List, MAX_CLIENT_SOCKET_CNT, tPID);
+		}
+		usleep(100000);
+	}
+	killAllClientProcess(tChildPID_List, MAX_CLIENT_SOCKET_CNT);
+	close(nServerSocket);
 
 	if (pPorts != NULL){
 		free(pPorts);
