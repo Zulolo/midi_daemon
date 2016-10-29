@@ -45,6 +45,8 @@
 #include "lib/hci_lib.h"
 #include "lib/rfcomm.h"
 
+#include <alsa/asoundlib.h>
+
 #include "midi.h"
 
 #define MAX_CLIENT_SOCKET_CNT			10
@@ -52,18 +54,14 @@
 
 static pid_t tChildPID_List[MAX_CLIENT_SOCKET_CNT];
 static volatile sig_atomic_t __io_canceled = 0;
-
-static void sig_hup(int sig)
-{
-	return;
-}
+char cSndPort[128];
 
 static void sig_term(int sig)
 {
 	__io_canceled = 1;
 }
 
-int setClientOffDuty(pid_t pChildPID_List, int nPID_ListLen, pid_t tPID)
+int setClientOffDuty(pid_t* pChildPID_List, int nPID_ListLen, pid_t tPID)
 {
 	while (nPID_ListLen > 0){
 		nPID_ListLen--;
@@ -75,7 +73,7 @@ int setClientOffDuty(pid_t pChildPID_List, int nPID_ListLen, pid_t tPID)
 	return (-1);
 }
 
-int setClientOnDuty(pid_t pChildPID_List, int nPID_ListLen, pid_t tPID)
+int setClientOnDuty(pid_t* pChildPID_List, int nPID_ListLen, pid_t tPID)
 {
 	while (nPID_ListLen > 0){
 		nPID_ListLen--;
@@ -87,7 +85,7 @@ int setClientOnDuty(pid_t pChildPID_List, int nPID_ListLen, pid_t tPID)
 	return (-1);
 }
 
-int isAllClientProcessExit(pid_t pChildPID_List, int nPID_ListLen)
+int isAllClientProcessExit(pid_t* pChildPID_List, int nPID_ListLen)
 {
 	while (nPID_ListLen > 0){
 		nPID_ListLen--;
@@ -98,7 +96,7 @@ int isAllClientProcessExit(pid_t pChildPID_List, int nPID_ListLen)
 	return 1;
 }
 
-void killAllClientProcess(pid_t pChildPID_List, int nPID_ListLen)
+void killAllClientProcess(pid_t* pChildPID_List, int nPID_ListLen)
 {
 	int nLen = nPID_ListLen;
 	while (nPID_ListLen > 0){
@@ -128,16 +126,66 @@ static void clientService(int nSporeSocket)
 {
 	struct sigaction tSignalAction;
 	int nBytesRead;
+	snd_seq_event_t tSndSeqEvent;
+	snd_seq_t *pSeq = NULL;
+	int nClientID;
+	int nPortCount;
+	int nMyPortID = 0;
+	snd_seq_addr_t *pPorts = NULL;
+	snd_seq_ev_note_t tNoteEvent;
 
 	memset(&tSignalAction, 0, sizeof(tSignalAction));
 	tSignalAction.sa_handler = sig_term;
 	sigaction(SIGINT,  &tSignalAction, NULL);
 
-	while(!__io_canceled){
-		nBytesRead = recv(nSporeSocket , buf , sizeof(buf) , 0);
-		if( bytes_read > 0 ) {
-			printf( "received [%s]\n" , buf ) ;
+	nClientID = nInitSeq(&pSeq);
+	if ((nClientID < 0) || (NULL == pSeq)){
+		puts("Initialize sequencer failed.");
+		if (pSeq != NULL){
+			snd_seq_close(pSeq);
 		}
+		exit(1);
+	}
+	nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
+	if (nPortCount < 1) {
+		printf("Please specify at least one port.");
+		erroExitHandler(pSeq, pPorts, nMyPortID);
+	}
+
+	nMyPortID = pCreateSourcePort(pSeq);
+	if (nMyPortID < 0){
+		erroExitHandler(pSeq, pPorts, nMyPortID);
+	}
+	if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
+		erroExitHandler(pSeq, pPorts, nMyPortID);
+	}
+
+	snd_seq_ev_clear(&tSndSeqEvent);
+    snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
+    snd_seq_ev_set_subs(&tSndSeqEvent);
+    snd_seq_ev_set_direct(&tSndSeqEvent);
+	snd_seq_ev_set_fixed(&tSndSeqEvent);
+
+	while(!__io_canceled){
+		nBytesRead = recv(nSporeSocket, &tNoteEvent, sizeof(tNoteEvent), 0);
+		if(nBytesRead != sizeof(snd_seq_event_t)) {
+			puts("Received error.");
+			break;
+		}else{
+			tSndSeqEvent.data.note = tNoteEvent;
+			snd_seq_event_output(pSeq, &tSndSeqEvent);
+			snd_seq_drain_output(pSeq);
+		}
+	}
+	close(nSporeSocket);
+	if (pPorts != NULL){
+		free(pPorts);
+	}
+	if (nMyPortID >= 0){
+		snd_seq_delete_port(pSeq, nMyPortID);
+	}
+	if (pSeq != NULL){
+		snd_seq_close(pSeq);
 	}
 	exit(0);
 }
@@ -147,7 +195,6 @@ int main(int argc, char *argv[])
 	struct sigaction tSignalAction;
 
 	// bt related
-	bdaddr_t tBD_Addr;
 	int nServerSocket, nSporeSocket, tPID;
 	struct sockaddr_rc tLocalAddr, tRemoteAddr;
 	socklen_t tAddrLen;
@@ -198,7 +245,8 @@ int main(int argc, char *argv[])
 			nDoList = 1;
 			break;
 		case 'p':
-			nPortCount = nParsePorts(optarg, &pPorts, pSeq);
+			strcpy(cSndPort, optarg);
+			nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
 			break;
 		default:
 			listUsage(argv[0]);
@@ -225,10 +273,8 @@ int main(int argc, char *argv[])
 	}
 	// midi ready
 
-	bacpy(&tBD_Addr, BDADDR_ANY);
-
 	tLocalAddr.rc_family = AF_BLUETOOTH;
-	bacpy(&tLocalAddr.rc_bdaddr, &tBD_Addr);
+	bacpy(&tLocalAddr.rc_bdaddr, BDADDR_ANY);
 	tLocalAddr.rc_channel = 1;	//(argc < 2) ? 1 : atoi(argv[1]);
 
 	nServerSocket = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
@@ -251,7 +297,7 @@ int main(int argc, char *argv[])
 		ba2str(&(tRemoteAddr.rc_bdaddr), cDst);
 		printf("Client %s connected.\n", cDst);
 		tPID = fork();
-		if (tPID < 0 ){
+		if (tPID < 0){
 			close(nServerSocket);
 			killAllClientProcess(tChildPID_List, MAX_CLIENT_SOCKET_CNT);
 			erroExitHandler(pSeq, pPorts, nMyPortID);
