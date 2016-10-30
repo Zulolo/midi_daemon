@@ -207,7 +207,7 @@ int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)
 	snd_seq_event_output(pSeq, &tEvent);
 	snd_seq_drain_output(pSeq);
 
-    for (i = 0; i < 5; i++){
+    for (i = 0; i < 2; i++){
 		 // set event type, data, so on..
 		tEvent.type = SND_SEQ_EVENT_NOTEON;
 		tEvent.data.note.channel = 0;
@@ -262,7 +262,7 @@ int nPlayConnectedMidi(snd_seq_t *pSeq, int nMyPortID)
 	snd_seq_event_output(pSeq, &tEvent);
 	snd_seq_drain_output(pSeq);
 
-    for (i = 0; i < 5; i++){
+    for (i = 0; i < 2; i++){
 		 // set event type, data, so on..
 		tEvent.type = SND_SEQ_EVENT_NOTEON;
 		tEvent.data.note.channel = 0;

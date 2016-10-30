@@ -53,7 +53,7 @@
 #define EMPTY_PID						((pid_t)0)
 
 static pid_t tChildPID_List[MAX_CLIENT_SOCKET_CNT];
-static volatile sig_atomic_t __io_canceled = 0;
+static int __io_canceled = 0;
 char cSndPort[128];
 
 static void sig_term(int sig)
@@ -174,11 +174,15 @@ static void clientService(int nSporeSocket)
     snd_seq_ev_set_direct(&tSndSeqEvent);
 	snd_seq_ev_set_fixed(&tSndSeqEvent);
 
-	while(!__io_canceled){
+	nPlayConnectedMidi(pSeq, nMyPortID);
+
+	while(0 == __io_canceled){
 		nBytesRead = recv(nSporeSocket, unBuff, 2, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
-		if(nBytesRead != 2){	//sizeof(snd_seq_event_t)) {
-			puts("Received error.");
+		if(nBytesRead < 0){	//sizeof(snd_seq_event_t)) {
+			printf("Received error with code %d.\n", errno);
 			break;
+		}else if (0 == nBytesRead) {
+			puts("Received empty.");
 		}else{
 //			tSndSeqEvent.data.note.channel = 0;
 			tSndSeqEvent.data.note.note = unBuff[0];
@@ -314,13 +318,14 @@ int main(int argc, char *argv[])
 	puts("Server BT port binded to RFCOMM.");
 
 	listen(nServerSocket, MAX_CLIENT_SOCKET_CNT);
-	puts("Waiting for connection from client...");
+
 	tAddrLen = sizeof(tRemoteAddr);
-	while(!__io_canceled){
+	while(0 == __io_canceled){
+		puts("Waiting for connection from client...");
 		nSporeSocket = accept(nServerSocket, (struct sockaddr *) &tRemoteAddr, &tAddrLen);
 		ba2str(&(tRemoteAddr.rc_bdaddr), cDst);
 		printf("Client %s connected.\n", cDst);
-		nPlayConnectedMidi(pSeq, nMyPortID);
+
 		tPID = fork();
 		if (tPID < 0){
 			close(nServerSocket);
@@ -331,6 +336,7 @@ int main(int argc, char *argv[])
 			clientService(nSporeSocket);
 		}else{
 			// Parent process
+			close(nSporeSocket);
 			setClientOnDuty(tChildPID_List, MAX_CLIENT_SOCKET_CNT, tPID);
 		}
 		usleep(100000);
