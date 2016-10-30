@@ -133,10 +133,13 @@ static void clientService(int nSporeSocket)
 	int nMyPortID = 0;
 	snd_seq_addr_t *pPorts = NULL;
 	snd_seq_ev_note_t tNoteEvent;
+	uint8_t unBuff[2];
+	pid_t tMyPID;
 
-	memset(&tSignalAction, 0, sizeof(tSignalAction));
-	tSignalAction.sa_handler = sig_term;
-	sigaction(SIGINT,  &tSignalAction, NULL);
+//	memset(&tSignalAction, 0, sizeof(tSignalAction));
+//	tSignalAction.sa_handler = sig_term;
+//	sigaction(SIGINT,  &tSignalAction, NULL);
+	tMyPID = getpid();
 
 	nClientID = nInitSeq(&pSeq);
 	if ((nClientID < 0) || (NULL == pSeq)){
@@ -146,19 +149,24 @@ static void clientService(int nSporeSocket)
 		}
 		exit(1);
 	}
+	printf("[%d]: Sequencer initialized.\n", tMyPID);
+
 	nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
 	if (nPortCount < 1) {
-		printf("Please specify at least one port.");
+		printf("Please specify at least one port.\n");
 		erroExitHandler(pSeq, pPorts, nMyPortID);
 	}
+	printf("[%d]: Sequencer ports parsed.\n", tMyPID);
 
 	nMyPortID = pCreateSourcePort(pSeq);
 	if (nMyPortID < 0){
 		erroExitHandler(pSeq, pPorts, nMyPortID);
 	}
+	printf("[%d]: Sequencer source port created.\n", tMyPID);
 	if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
 		erroExitHandler(pSeq, pPorts, nMyPortID);
 	}
+	printf("[%d]: Sequencer target port connected.\n", tMyPID);
 
 	snd_seq_ev_clear(&tSndSeqEvent);
     snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
@@ -167,12 +175,16 @@ static void clientService(int nSporeSocket)
 	snd_seq_ev_set_fixed(&tSndSeqEvent);
 
 	while(!__io_canceled){
-		nBytesRead = recv(nSporeSocket, &tNoteEvent, sizeof(tNoteEvent), 0);
-		if(nBytesRead != sizeof(snd_seq_event_t)) {
+		nBytesRead = recv(nSporeSocket, unBuff, 2, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
+		if(nBytesRead != 2){	//sizeof(snd_seq_event_t)) {
 			puts("Received error.");
 			break;
 		}else{
-			tSndSeqEvent.data.note = tNoteEvent;
+//			tSndSeqEvent.data.note.channel = 0;
+			tSndSeqEvent.data.note.note = unBuff[0];
+		    tSndSeqEvent.data.note.velocity = unBuff[1];
+
+//			tSndSeqEvent.data.note = tNoteEvent;
 			snd_seq_event_output(pSeq, &tSndSeqEvent);
 			snd_seq_drain_output(pSeq);
 		}
@@ -217,12 +229,17 @@ int main(int argc, char *argv[])
 	int nDoList = 0;
 	snd_seq_addr_t *pPorts = NULL;
 
+	puts("MIDI daemon start.");
+
 	memset(&tSignalAction, 0, sizeof(tSignalAction));
 	tSignalAction.sa_handler = sig_chld;
 	sigaction(SIGCHLD, &tSignalAction, NULL);
 
 	tSignalAction.sa_handler = sig_term;
 	sigaction(SIGINT,  &tSignalAction, NULL);
+	puts("Signal registration done.");
+
+	memset(tChildPID_List, 0, sizeof(tChildPID_List));
 
 	nClientID = nInitSeq(&pSeq);
 	if ((nClientID < 0) || (NULL == pSeq)){
@@ -230,35 +247,38 @@ int main(int argc, char *argv[])
 		if (pSeq != NULL){
 			snd_seq_close(pSeq);
 		}
-		return 1;
+		exit(1);
 	}
+	puts("Sequencer initialized.");
 
 	while ((nOpt = getopt_long(argc, argv, sShortOptions, tLongOptions, NULL)) != -1) {
 		switch (nOpt) {
 		case 'h':
 			listUsage(argv[0]);
-			return 0;
+			exit(0);
 		case 'V':
 			listVersion();
-			return 0;
+			exit(0);
 		case 'l':
 			nDoList = 1;
 			break;
 		case 'p':
 			strcpy(cSndPort, optarg);
 			nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
+			puts("Sequencer ports parsed.");
 			break;
 		default:
 			listUsage(argv[0]);
-			return 1;
+			exit(0);
 		}
 	}
 
 	if (1 == nDoList) {
 		listPorts(pSeq);
+		exit(0);
 	} else {
 		if (nPortCount < 1) {
-			printf("Please specify at least one port.");
+			printf("Please specify at least one port.\n");
 			erroExitHandler(pSeq, pPorts, nMyPortID);
 		}
 
@@ -266,9 +286,11 @@ int main(int argc, char *argv[])
 		if (nMyPortID < 0){
 			erroExitHandler(pSeq, pPorts, nMyPortID);
 		}
+		puts("Source sequencer port created.");
 		if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
 			erroExitHandler(pSeq, pPorts, nMyPortID);
 		}
+		puts("Target sequencer port connected.");
 		nPlayReadyMidi(pSeq, nMyPortID);
 	}
 	// midi ready
@@ -282,12 +304,14 @@ int main(int argc, char *argv[])
 		perror("Can't open RFCOMM control socket");
 		erroExitHandler(pSeq, pPorts, nMyPortID);
 	}
+	puts("Server BT port created.");
 
 	if (bind(nServerSocket, (struct sockaddr *)&tLocalAddr, sizeof(tLocalAddr)) < 0) {
 		perror("Can't bind RFCOMM socket");
 		close(nServerSocket);
 		erroExitHandler(pSeq, pPorts, nMyPortID);
 	}
+	puts("Server BT port binded to RFCOMM.");
 
 	listen(nServerSocket, MAX_CLIENT_SOCKET_CNT);
 	puts("Waiting for connection from client...");
@@ -296,6 +320,7 @@ int main(int argc, char *argv[])
 		nSporeSocket = accept(nServerSocket, (struct sockaddr *) &tRemoteAddr, &tAddrLen);
 		ba2str(&(tRemoteAddr.rc_bdaddr), cDst);
 		printf("Client %s connected.\n", cDst);
+		nPlayConnectedMidi(pSeq, nMyPortID);
 		tPID = fork();
 		if (tPID < 0){
 			close(nServerSocket);

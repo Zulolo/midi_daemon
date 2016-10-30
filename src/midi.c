@@ -201,19 +201,18 @@ int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)
     snd_seq_ev_set_direct(&tEvent);
 	snd_seq_ev_set_fixed(&tEvent);
 
-    for (i = 75; i < 78; i++){
-		 // set event type, data, so on..
-		tEvent.type = SND_SEQ_EVENT_PGMCHANGE;
-		tEvent.data.control.channel = 0;
-		tEvent.data.control.value = i+1;
-		snd_seq_event_output(pSeq, &tEvent);
-		snd_seq_drain_output(pSeq);
+	tEvent.type = SND_SEQ_EVENT_PGMCHANGE;
+	tEvent.data.control.channel = 0;
+	tEvent.data.control.value = 1;
+	snd_seq_event_output(pSeq, &tEvent);
+	snd_seq_drain_output(pSeq);
 
+    for (i = 0; i < 5; i++){
+		 // set event type, data, so on..
 		tEvent.type = SND_SEQ_EVENT_NOTEON;
 		tEvent.data.note.channel = 0;
 		tEvent.data.note.note = 100;
-		tEvent.data.note.velocity = 100;
-
+		tEvent.data.note.velocity = 80;
 		snd_seq_event_output(pSeq, &tEvent);
 		snd_seq_drain_output(pSeq);
 		usleep(300000);
@@ -224,94 +223,79 @@ int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)
 		tEvent.data.note.velocity = 0;
 		snd_seq_event_output(pSeq, &tEvent);
 		snd_seq_drain_output(pSeq);
-		usleep(300000);
-    }
+//		usleep(300000);
 
+		tEvent.type = SND_SEQ_EVENT_NOTEON;
+		tEvent.data.note.channel = 0;
+		tEvent.data.note.note = 80;
+		tEvent.data.note.velocity = 80;
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
+		usleep(300000);
+
+		tEvent.type = SND_SEQ_EVENT_NOTEOFF;
+		tEvent.data.note.channel = 0;
+		tEvent.data.note.note = 80;
+		tEvent.data.note.velocity = 0;
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
+//		usleep(300000);
+    }
 
 	return 0;
 }
 
-//int main(int argc, char *argv[]) {
-//	static const char sShortOptions[] = "hVlp:";
-//	static const struct option tLongOptions[] = {
-//		{"help", 0, NULL, 'h'},
-//		{"listVersion", 0, NULL, 'V'},
-//		{"list", 0, NULL, 'l'},
-//		{"port", 1, NULL, 'p'},
-//		{}
-//	};
-//	int nOpt;
-//	int nDoList = 0;
-//	snd_seq_t *pSeq = NULL;
-//	int nClientID;
-//	int nPortCount;
-//	snd_seq_addr_t *pPorts = NULL;
-//	int nMyPortID = 0;
-//
-////	sleep(10);
-////
-////	system("/etc/init.d/bluetooth stop");
-////	system("hciconfig hci0 up");
-////	system("/usr/sbin/bluetoothd --compat &");
-////	system("mknod -m 666 /dev/rfcomm0 c 216 0");
-////	system("rfcomm watch /dev/rfcomm0 3 /sbin/agetty rfcomm0 115200 linux &");
-//
-//
-//	nClientID = nInitSeq(&pSeq);
-//	if ((nClientID < 0) || (NULL == pSeq)){
-//		puts("Initialize sequencer failed.");
-//		if (pSeq != NULL){
-//			snd_seq_close(pSeq);
-//		}
-//		return 1;
-//	}
-//
-//	while ((nOpt = getopt_long(argc, argv, sShortOptions, tLongOptions, NULL)) != -1) {
-//		switch (nOpt) {
-//		case 'h':
-//			listUsage(argv[0]);
-//			return 0;
-//		case 'V':
-//			listVersion();
-//			return 0;
-//		case 'l':
-//			nDoList = 1;
-//			break;
-//		case 'p':
-//			nPortCount = nParsePorts(optarg, &pPorts, pSeq);
-//			break;
-//		default:
-//			listUsage(argv[0]);
-//			return 1;
-//		}
-//	}
-//
-//	if (1 == nDoList) {
-//		listPorts(pSeq);
-//	} else {
-//		if (nPortCount < 1) {
-//			printf("Please specify at least one port.");
-//			erroExitHandler(pSeq, pPorts, nMyPortID);
-//		}
-//
-//		nMyPortID = pCreateSourcePort(pSeq);
-//		if (nMyPortID < 0){
-//			erroExitHandler(pSeq, pPorts, nMyPortID);
-//		}
-//		if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
-//			erroExitHandler(pSeq, pPorts, nMyPortID);
-//		}
-//		nPlayMidi(pSeq, nMyPortID);
-//	}
-//	if (pPorts != NULL){
-//		free(pPorts);
-//	}
-//	if (nMyPortID >= 0){
-//		snd_seq_delete_port(pSeq, nMyPortID);
-//	}
-//	if (pSeq != NULL){
-//		snd_seq_close(pSeq);
-//	}
-//
-//	return 0;
-//}
+int nPlayConnectedMidi(snd_seq_t *pSeq, int nMyPortID)
+{
+	snd_seq_event_t tEvent;
+	int i;
+
+	snd_seq_ev_clear(&tEvent);
+    snd_seq_ev_set_source(&tEvent, nMyPortID);
+    snd_seq_ev_set_subs(&tEvent);
+    snd_seq_ev_set_direct(&tEvent);
+	snd_seq_ev_set_fixed(&tEvent);
+
+	tEvent.type = SND_SEQ_EVENT_PGMCHANGE;
+	tEvent.data.control.channel = 0;
+	tEvent.data.control.value = 25;
+	snd_seq_event_output(pSeq, &tEvent);
+	snd_seq_drain_output(pSeq);
+
+    for (i = 0; i < 5; i++){
+		 // set event type, data, so on..
+		tEvent.type = SND_SEQ_EVENT_NOTEON;
+		tEvent.data.note.channel = 0;
+		tEvent.data.note.note = 50;
+		tEvent.data.note.velocity = 80;
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
+		usleep(300000);
+
+		tEvent.type = SND_SEQ_EVENT_NOTEOFF;
+		tEvent.data.note.channel = 0;
+		tEvent.data.note.note = 50;
+		tEvent.data.note.velocity = 0;
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
+//		usleep(300000);
+
+		tEvent.type = SND_SEQ_EVENT_NOTEON;
+		tEvent.data.note.channel = 0;
+		tEvent.data.note.note = 60;
+		tEvent.data.note.velocity = 80;
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
+		usleep(300000);
+
+		tEvent.type = SND_SEQ_EVENT_NOTEOFF;
+		tEvent.data.note.channel = 0;
+		tEvent.data.note.note = 60;
+		tEvent.data.note.velocity = 0;
+		snd_seq_event_output(pSeq, &tEvent);
+		snd_seq_drain_output(pSeq);
+//		usleep(300000);
+    }
+
+	return 0;
+}

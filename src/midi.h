@@ -28,5 +28,6 @@ void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int nPortid);
 
 int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID);
 
+int nPlayConnectedMidi(snd_seq_t *pSeq, int nMyPortID);
 
 #endif /* MIDI_H_ */
