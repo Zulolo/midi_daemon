@@ -124,7 +124,7 @@ static void sig_chld(int signo)
 
 static void clientService(int nSporeSocket)
 {
-	struct sigaction tSignalAction;
+//	struct sigaction tSignalAction;
 	int nBytesRead;
 	snd_seq_event_t tSndSeqEvent;
 	snd_seq_t *pSeq = NULL;
@@ -132,7 +132,7 @@ static void clientService(int nSporeSocket)
 	int nPortCount;
 	int nMyPortID = 0;
 	snd_seq_addr_t *pPorts = NULL;
-	snd_seq_ev_note_t tNoteEvent;
+//	snd_seq_ev_note_t tNoteEvent;
 	uint8_t unBuff[2];
 	pid_t tMyPID;
 
@@ -176,6 +176,14 @@ static void clientService(int nSporeSocket)
 
 	nPlayConnectedMidi(pSeq, nMyPortID);
 
+	tSndSeqEvent.type = SND_SEQ_EVENT_PGMCHANGE;
+	tSndSeqEvent.data.control.channel = 0;
+	tSndSeqEvent.data.control.value = 1;
+	snd_seq_event_output(pSeq, &tSndSeqEvent);
+	snd_seq_drain_output(pSeq);
+
+	tSndSeqEvent.type = SND_SEQ_EVENT_NOTEON;
+	tSndSeqEvent.data.note.channel = 0;
 	while(0 == __io_canceled){
 		nBytesRead = recv(nSporeSocket, unBuff, 2, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
 		if(nBytesRead < 0){	//sizeof(snd_seq_event_t)) {
@@ -184,6 +192,7 @@ static void clientService(int nSporeSocket)
 		}else if (0 == nBytesRead) {
 			puts("Received empty.");
 		}else{
+			printf("%02X, %02X\n", unBuff[0], unBuff[1]);
 //			tSndSeqEvent.data.note.channel = 0;
 			tSndSeqEvent.data.note.note = unBuff[0];
 		    tSndSeqEvent.data.note.velocity = unBuff[1];
