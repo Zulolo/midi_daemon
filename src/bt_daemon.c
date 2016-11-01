@@ -50,6 +50,7 @@
 #include "midi.h"
 
 #define MAX_CLIENT_SOCKET_CNT			10
+#define NOTE_FRAME_LENGTH				6
 #define EMPTY_PID						((pid_t)0)
 
 static pid_t tChildPID_List[MAX_CLIENT_SOCKET_CNT];
@@ -122,6 +123,16 @@ static void sig_chld(int signo)
 	return;
 }
 
+static int handleReceivedDataCrossTwoFrame(uint8_t* pBuff, int32_t nAlreadyReadLength, int32_t nBuffLen)
+{
+	// case 1: x,x,0,0,y... or 0,0,y...
+	// => y...
+
+	// case 2: 0,m,d...
+	// => m,d...
+	return nAlreadyReadLength;
+}
+
 static void clientService(int nSporeSocket)
 {
 //	struct sigaction tSignalAction;
@@ -133,8 +144,9 @@ static void clientService(int nSporeSocket)
 	int nMyPortID = 0;
 	snd_seq_addr_t *pPorts = NULL;
 //	snd_seq_ev_note_t tNoteEvent;
-	uint8_t unBuff[2];
+	uint8_t unBuff[NOTE_FRAME_LENGTH];
 	pid_t tMyPID;
+	int nNeedToReadByte;
 
 //	memset(&tSignalAction, 0, sizeof(tSignalAction));
 //	tSignalAction.sa_handler = sig_term;
@@ -184,22 +196,30 @@ static void clientService(int nSporeSocket)
 
 	tSndSeqEvent.type = SND_SEQ_EVENT_NOTEON;
 	tSndSeqEvent.data.note.channel = 0;
+	nNeedToReadByte = NOTE_FRAME_LENGTH;
 	while(0 == __io_canceled){
-		nBytesRead = recv(nSporeSocket, unBuff, 2, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
+		nBytesRead = recv(nSporeSocket, unBuff + (NOTE_FRAME_LENGTH - nNeedToReadByte), nNeedToReadByte, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
 		if(nBytesRead < 0){	//sizeof(snd_seq_event_t)) {
 			printf("Received error with code %d.\n", errno);
 			break;
 		}else if (0 == nBytesRead) {
 			puts("Received empty.");
 		}else{
-			printf("%02X, %02X\n", unBuff[0], unBuff[1]);
-//			tSndSeqEvent.data.note.channel = 0;
-			tSndSeqEvent.data.note.note = unBuff[0];
-		    tSndSeqEvent.data.note.velocity = unBuff[1];
+			// tricky, I tried my best to explain
+			nNeedToReadByte -= nBytesRead;
+			nNeedToReadByte = NOTE_FRAME_LENGTH - handleReceivedDataCrossTwoFrame(unBuff, NOTE_FRAME_LENGTH - nNeedToReadByte);
 
-//			tSndSeqEvent.data.note = tNoteEvent;
-			snd_seq_event_output(pSeq, &tSndSeqEvent);
-			snd_seq_drain_output(pSeq);
+			if (0 == nNeedToReadByte){
+				printf("%02X, %02X\n", unBuff[0], unBuff[1]);
+	//			tSndSeqEvent.data.note.channel = 0;
+				tSndSeqEvent.data.note.note = unBuff[0];
+			    tSndSeqEvent.data.note.velocity = unBuff[1];
+
+	//			tSndSeqEvent.data.note = tNoteEvent;
+				snd_seq_event_output(pSeq, &tSndSeqEvent);
+				snd_seq_drain_output(pSeq);
+				nNeedToReadByte = NOTE_FRAME_LENGTH;
+			}
 		}
 	}
 	close(nSporeSocket);
