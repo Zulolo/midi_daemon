@@ -50,7 +50,8 @@
 #include "midi.h"
 
 #define MAX_CLIENT_SOCKET_CNT			10
-#define NOTE_FRAME_LENGTH				6
+#define NOTE_FRAME_LENGTH				5	// AE2C\n
+#define NOTE_FRAME_END_SYMBOL			'\0'
 #define EMPTY_PID						((pid_t)0)
 
 static pid_t tChildPID_List[MAX_CLIENT_SOCKET_CNT];
@@ -123,13 +124,30 @@ static void sig_chld(int signo)
 	return;
 }
 
-static int handleReceivedDataCrossTwoFrame(uint8_t* pBuff, int32_t nAlreadyReadLength, int32_t nBuffLen)
+static int handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLength, int32_t nBuffLen)
 {
-	// case 1: x,x,0,0,y... or 0,0,y...
-	// => y...
+	int32_t nEndSymbolPos;
+	static char cTemp[32];
 
-	// case 2: 0,m,d...
-	// => m,d...
+	if (nAlreadyReadLength == nBuffLen){
+		if(pBuff[nBuffLen - 1] != NOTE_FRAME_END_SYMBOL){
+			puts("Buffer is full but no end symbol.");
+			memset(pBuff, 0, nBuffLen);
+			return 0;
+		}else{
+			return nBuffLen;
+		}
+	}
+
+	for (nEndSymbolPos = 0; nEndSymbolPos < nAlreadyReadLength; nEndSymbolPos++){
+		if (NOTE_FRAME_END_SYMBOL == pBuff[nEndSymbolPos]){
+			memset(cTemp, 0, sizeof(cTemp));
+			memcpy(cTemp, pBuff + nEndSymbolPos + 1, nAlreadyReadLength - nEndSymbolPos - 1);
+			memset(pBuff, 0, nBuffLen);
+			memcpy(pBuff, cTemp, nAlreadyReadLength - nEndSymbolPos - 1);
+			return nAlreadyReadLength - nEndSymbolPos - 1;
+		}
+	}
 	return nAlreadyReadLength;
 }
 
@@ -144,9 +162,11 @@ static void clientService(int nSporeSocket)
 	int nMyPortID = 0;
 	snd_seq_addr_t *pPorts = NULL;
 //	snd_seq_ev_note_t tNoteEvent;
-	uint8_t unBuff[NOTE_FRAME_LENGTH];
+	char cBuff[NOTE_FRAME_LENGTH];
 	pid_t tMyPID;
 	int nNeedToReadByte;
+	int32_t nIndex;
+	uint8_t unNoteData[2];
 
 //	memset(&tSignalAction, 0, sizeof(tSignalAction));
 //	tSignalAction.sa_handler = sig_term;
@@ -197,8 +217,9 @@ static void clientService(int nSporeSocket)
 	tSndSeqEvent.type = SND_SEQ_EVENT_NOTEON;
 	tSndSeqEvent.data.note.channel = 0;
 	nNeedToReadByte = NOTE_FRAME_LENGTH;
+	memset(cBuff, 0, sizeof(cBuff));
 	while(0 == __io_canceled){
-		nBytesRead = recv(nSporeSocket, unBuff + (NOTE_FRAME_LENGTH - nNeedToReadByte), nNeedToReadByte, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
+		nBytesRead = recv(nSporeSocket, cBuff + (NOTE_FRAME_LENGTH - nNeedToReadByte), nNeedToReadByte, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
 		if(nBytesRead < 0){	//sizeof(snd_seq_event_t)) {
 			printf("Received error with code %d.\n", errno);
 			break;
@@ -207,18 +228,22 @@ static void clientService(int nSporeSocket)
 		}else{
 			// tricky, I tried my best to explain
 			nNeedToReadByte -= nBytesRead;
-			nNeedToReadByte = NOTE_FRAME_LENGTH - handleReceivedDataCrossTwoFrame(unBuff, NOTE_FRAME_LENGTH - nNeedToReadByte);
+			nNeedToReadByte = NOTE_FRAME_LENGTH - handleReceivedDataCrossTwoFrame(cBuff,
+					NOTE_FRAME_LENGTH - nNeedToReadByte, NOTE_FRAME_LENGTH);
 
 			if (0 == nNeedToReadByte){
-				printf("%02X, %02X\n", unBuff[0], unBuff[1]);
+				printf("BT received: %s\n", cBuff);
+				for (nIndex = 0; nIndex < 2; nIndex++)
+				    sscanf(cBuff + nIndex * 2, "%2hhx", unNoteData + nIndex);
 	//			tSndSeqEvent.data.note.channel = 0;
-				tSndSeqEvent.data.note.note = unBuff[0];
-			    tSndSeqEvent.data.note.velocity = unBuff[1];
+				tSndSeqEvent.data.note.note = unNoteData[0];
+			    tSndSeqEvent.data.note.velocity = unNoteData[1];
 
 	//			tSndSeqEvent.data.note = tNoteEvent;
 				snd_seq_event_output(pSeq, &tSndSeqEvent);
 				snd_seq_drain_output(pSeq);
 				nNeedToReadByte = NOTE_FRAME_LENGTH;
+				memset(cBuff, 0, sizeof(cBuff));
 			}
 		}
 	}
