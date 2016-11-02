@@ -128,27 +128,30 @@ static int handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLeng
 {
 	int32_t nEndSymbolPos;
 	static char cTemp[32];
-
-	if (nAlreadyReadLength == nBuffLen){
-		if(pBuff[nBuffLen - 1] != NOTE_FRAME_END_SYMBOL){
-			puts("Buffer is full but no end symbol.");
-			memset(pBuff, 0, nBuffLen);
-			return 0;
-		}else{
-			return nBuffLen;
-		}
-	}
-
+	// if this situation happened "/0/0/0/0/0", it is also OK
+	// Every time one new char will be red into buff and the first /0 will be removed
+	// and then one new char will be red into buff...
 	for (nEndSymbolPos = 0; nEndSymbolPos < nAlreadyReadLength; nEndSymbolPos++){
 		if (NOTE_FRAME_END_SYMBOL == pBuff[nEndSymbolPos]){
-			memset(cTemp, 0, sizeof(cTemp));
-			memcpy(cTemp, pBuff + nEndSymbolPos + 1, nAlreadyReadLength - nEndSymbolPos - 1);
-			memset(pBuff, 0, nBuffLen);
-			memcpy(pBuff, cTemp, nAlreadyReadLength - nEndSymbolPos - 1);
-			return nAlreadyReadLength - nEndSymbolPos - 1;
+			if (nEndSymbolPos == (nBuffLen - 1)){
+				return nBuffLen;
+			}else{
+				memset(cTemp, 0, sizeof(cTemp));
+				memcpy(cTemp, pBuff + nEndSymbolPos + 1, nAlreadyReadLength - nEndSymbolPos - 1);
+				memset(pBuff, 0, nBuffLen);
+				memcpy(pBuff, cTemp, nAlreadyReadLength - nEndSymbolPos - 1);
+				return nAlreadyReadLength - nEndSymbolPos - 1;
+			}
 		}
 	}
-	return nAlreadyReadLength;
+	if (nAlreadyReadLength == nBuffLen){
+		puts("Buffer is full but no end symbol.");
+		memset(pBuff, 0, nBuffLen);
+		return 0;
+	}else{
+		return nAlreadyReadLength;
+	}
+
 }
 
 static void clientService(int nSporeSocket)
