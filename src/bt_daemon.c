@@ -57,6 +57,7 @@
 #define EMPTY_TID						((pthread_t)0)
 #define EMPTY_SOCKET					((int)0)
 
+pthread_mutex_t tMidiAttrMutex = PTHREAD_MUTEX_INITIALIZER;
 static int __io_canceled = 0;
 static int nSocketList[MAX_CLIENT_SOCKET_CNT];
 char cSndPort[128];
@@ -85,78 +86,6 @@ void setSocketSlotFree(int* pSocketList, int nSocketListLen, int nSporeSocket)
 		}
 	}
 }
-
-//void waitAllThreadExit(pthread_t* pChildThreadList, int nThreadListLen)
-//{
-//	while (nThreadListLen > 0){
-//		nThreadListLen--;
-//		if (EMPTY_TID != pChildThreadList[nThreadListLen]){
-//			pthread_join(pChildThreadList[nThreadListLen], NULL);
-//		}
-//	}
-//}
-
-//
-//int setClientOffDuty(pid_t* pChildPID_List, int nPID_ListLen, pid_t tPID)
-//{
-//	while (nPID_ListLen > 0){
-//		nPID_ListLen--;
-//		if (tPID == pChildPID_List[nPID_ListLen]){
-//			pChildPID_List[nPID_ListLen] = EMPTY_PID;
-//			return 0;
-//		}
-//	}
-//	return (-1);
-//}
-//
-//int setClientOnDuty(pid_t* pChildPID_List, int nPID_ListLen, pid_t tPID)
-//{
-//	while (nPID_ListLen > 0){
-//		nPID_ListLen--;
-//		if (EMPTY_PID == pChildPID_List[nPID_ListLen]){
-//			pChildPID_List[nPID_ListLen] = tPID;
-//			return 0;
-//		}
-//	}
-//	return (-1);
-//}
-//
-//int isAllClientProcessExit(pid_t* pChildPID_List, int nPID_ListLen)
-//{
-//	while (nPID_ListLen > 0){
-//		nPID_ListLen--;
-//		if (EMPTY_PID != pChildPID_List[nPID_ListLen]){
-//			return 0;
-//		}
-//	}
-//	return 1;
-//}
-
-//void killAllClientProcess(pid_t* pChildPID_List, int nPID_ListLen)
-//{
-//	int nLen = nPID_ListLen;
-//	while (nPID_ListLen > 0){
-//		nPID_ListLen--;
-//		if (EMPTY_PID != pChildPID_List[nPID_ListLen]){
-//			kill(pChildPID_List[nPID_ListLen], SIGINT);
-//		}
-//	}
-//
-//	while (isAllClientProcessExit(pChildPID_List, nLen)){
-//		usleep(100000);
-//	}
-//}
-//
-//static void sig_chld(int signo)
-//{
-//	pid_t   tPID;
-//	int     nStat;
-//
-//	while((tPID = waitpid(-1, &nStat, WNOHANG)) > 0){
-//		setClientOffDuty(tChildPID_List, MAX_CLIENT_SOCKET_CNT, tPID);
-//	}
-//	return;
-//}
 
 static int handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLength, int32_t nBuffLen)
 {
@@ -200,18 +129,12 @@ static void* clientService(void* pSporeSocket)
 	snd_seq_addr_t *pPorts = NULL;
 //	snd_seq_ev_note_t tNoteEvent;
 	char cBuff[NOTE_FRAME_LENGTH];
-//	pid_t tMyPID;
 	int nNeedToReadByte;
 	int32_t nIndex;
 	uint8_t unNoteData[2];
 	int nSporeSocket = *((int*)pSporeSocket);
 
 	int i;
-
-//	memset(&tSignalAction, 0, sizeof(tSignalAction));
-//	tSignalAction.sa_handler = sig_term;
-//	sigaction(SIGINT,  &tSignalAction, NULL);
-//	tMyPID = getpid();
 
 	nClientID = nInitSeq(&pSeq);
 	if ((nClientID < 0) || (NULL == pSeq)){
@@ -308,10 +231,20 @@ RELEASE_SOCKET:
 //	exit(0);
 }
 
+void * updateMidiAttr(void* pWhatEver)
+{
+	pthread_mutex_lock(&tMidiAttrMutex);
+
+	pthread_mutex_unlock(&tMidiAttrMutex);
+
+	return NULL;
+}
+
 int main(int argc, char *argv[])
 {
 	struct sigaction tSignalAction;
 	static pthread_t tThreadList[MAX_CLIENT_SOCKET_CNT];
+	static pthread_t updateMidiAttrThread;
 	int nFreeSocketSlot;
 	int nRSTL;
 	pthread_attr_t tAttr;
@@ -341,9 +274,8 @@ int main(int argc, char *argv[])
 
 	puts("MIDI daemon start.");
 
-//	memset(&tSignalAction, 0, sizeof(tSignalAction));
-//	tSignalAction.sa_handler = sig_chld;
-//	sigaction(SIGCHLD, &tSignalAction, NULL);
+	memset(nSocketList, EMPTY_SOCKET, sizeof(nSocketList));
+	memset(tThreadList, EMPTY_TID, sizeof(tThreadList));
 
 	tSignalAction.sa_handler = sig_term;
 	sigaction(SIGINT,  &tSignalAction, NULL);
@@ -361,8 +293,12 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	memset(nSocketList, EMPTY_SOCKET, sizeof(nSocketList));
-	memset(tThreadList, EMPTY_TID, sizeof(tThreadList));
+	nRSTL = pthread_create(&updateMidiAttrThread, &tAttr, updateMidiAttr, NULL);
+	if(nRSTL)
+	{
+		puts("Start update midi attribute thread failed.");
+		exit(EXIT_FAILURE);
+	}
 
 	nClientID = nInitSeq(&pSeq);
 	if ((nClientID < 0) || (NULL == pSeq)){
@@ -461,22 +397,9 @@ int main(int argc, char *argv[])
 			erroExitHandler(pSeq, pPorts, nMyPortID);
 		}
 
-//		nRSTL = fork();
-//		if (nRSTL < 0){
-//			close(nServerSocket);
-//			killAllClientProcess(tChildPID_List, MAX_CLIENT_SOCKET_CNT);
-//			erroExitHandler(pSeq, pPorts, nMyPortID);
-//		}else if (0 == nRSTL){
-//			// Child process
-//			clientService(nSporeSocket);
-//		}else{
-//			// Parent process
-//			close(nSporeSocket);
-//			setClientOnDuty(tChildPID_List, MAX_CLIENT_SOCKET_CNT, nRSTL);
-//		}
 		usleep(100000);
 	}
-//	killAllClientProcess(tChildPID_List, MAX_CLIENT_SOCKET_CNT);
+
 	close(nServerSocket);
 
 	if (pPorts != NULL){
