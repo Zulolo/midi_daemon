@@ -41,6 +41,7 @@
 								</option>
 								<option id="gnu.c.link.option.libs.1363705252" name="Libraries (-l)" superClass="gnu.c.link.option.libs" useByScannerDiscovery="false" valueType="libs">
 									<listOptionValue builtIn="false" value="asound"/>
+									<listOptionValue builtIn="false" value="pthread"/>
 									<listOptionValue builtIn="false" value="bluetooth"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.gnu.c.linker.input.1408500311" superClass="cdt.managedbuild.tool.gnu.c.linker.input">

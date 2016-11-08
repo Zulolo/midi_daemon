@@ -187,7 +187,7 @@ void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int nPortid)
 	if (pSeq != NULL){
 		snd_seq_close(pSeq);
 	}
-	exit(1);
+	exit(EXIT_FAILURE);
 }
 
 int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)

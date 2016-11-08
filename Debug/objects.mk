@@ -4,5 +4,5 @@
 
 USER_OBJS :=
 
-LIBS := -lasound -lbluetooth
+LIBS := -lasound -lpthread -lbluetooth
 
