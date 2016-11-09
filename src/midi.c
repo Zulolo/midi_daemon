@@ -11,7 +11,7 @@
 #define MIDI_DAEMON_VERSION_STR		"01.01"
 
 /* error handling for ALSA functions */
-int nCheckSnd(const char *operation, int err)
+int32_t nCheckSnd(const char *operation, int32_t err)
 {
 	if (err < 0){
 		printf("Cannot %s - %s", operation, snd_strerror(err));
@@ -20,10 +20,10 @@ int nCheckSnd(const char *operation, int err)
 	return (0);
 }
 
-int nInitSeq(snd_seq_t** pSeq)
+int32_t nInitSeq(snd_seq_t** pSeq)
 {
-	int err;
-	int nClientID;
+	int32_t err;
+	int32_t nClientID;
 
 	/* open sequencer */
 	err = snd_seq_open(pSeq, "default", SND_SEQ_OPEN_DUPLEX, 0);
@@ -52,11 +52,11 @@ void listVersion(void)
 }
 
 /* parses one or more port addresses from the string */
-int nParsePorts(const char* arg, snd_seq_addr_t** pPorts, snd_seq_t *pSeq)
+int32_t nParsePorts(const char* arg, snd_seq_addr_t** pPorts, snd_seq_t *pSeq)
 {
 	char *pBuffer, *pStr, *pPortName;
-	int err;
-	int nPortCount = 0;
+	int32_t err;
+	int32_t nPortCount = 0;
 
 	/* make a copy of the string because we're going to modify it */
 	pBuffer = strdup(arg);
@@ -97,7 +97,7 @@ void listPorts(snd_seq_t *pSeq)
 {
 	snd_seq_client_info_t *pClientInfo;
 	snd_seq_port_info_t *pPortInfo;
-	int nClientID;
+	int32_t nClientID;
 
 	snd_seq_client_info_alloca(&pClientInfo);
 	snd_seq_port_info_alloca(&pPortInfo);
@@ -141,9 +141,9 @@ void listUsage(const char *argv0)
 		argv0);
 }
 
-int pCreateSourcePort(snd_seq_t *pSeq)
+int32_t pCreateSourcePort(snd_seq_t *pSeq)
 {
-	int nPortID;
+	int32_t nPortID;
 
 	if ((nPortID = snd_seq_create_simple_port(pSeq, "alsa midi generator",
 			SND_SEQ_PORT_CAP_READ|SND_SEQ_PORT_CAP_SUBS_READ,
@@ -154,9 +154,9 @@ int pCreateSourcePort(snd_seq_t *pSeq)
 	return nPortID;
 }
 
-int nConnectPorts(snd_seq_t *pSeq, int nPortCount, snd_seq_addr_t *pPorts)
+int32_t nConnectPorts(snd_seq_t *pSeq, int32_t nPortCount, snd_seq_addr_t *pPorts)
 {
-	int i, err;
+	int32_t i, err;
 
 	/*
 	 * We send MIDI events with explicit destination addresses, so we don't
@@ -176,7 +176,7 @@ int nConnectPorts(snd_seq_t *pSeq, int nPortCount, snd_seq_addr_t *pPorts)
 	return 0;
 }
 
-void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int nPortid)
+void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int32_t nPortid)
 {
 	if (pPorts != NULL){
 		free(pPorts);
@@ -190,10 +190,10 @@ void erroExitHandler(snd_seq_t *pSeq, snd_seq_addr_t *pPorts, int nPortid)
 	exit(EXIT_FAILURE);
 }
 
-int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)
+int32_t nPlayReadyMidi(snd_seq_t *pSeq, int32_t nMyPortID)
 {
 	snd_seq_event_t tEvent;
-	int i;
+	int32_t i;
 
 	snd_seq_ev_clear(&tEvent);
     snd_seq_ev_set_source(&tEvent, nMyPortID);
@@ -245,10 +245,10 @@ int nPlayReadyMidi(snd_seq_t *pSeq, int nMyPortID)
 	return 0;
 }
 
-int nPlayConnectedMidi(snd_seq_t *pSeq, int nMyPortID)
+int32_t nPlayConnectedMidi(snd_seq_t *pSeq, int32_t nMyPortID)
 {
 	snd_seq_event_t tEvent;
-	int i;
+	int32_t i;
 
 	snd_seq_ev_clear(&tEvent);
     snd_seq_ev_set_source(&tEvent, nMyPortID);

@@ -39,6 +39,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <sys/un.h>
 #include <pthread.h>
 
 #include "lib/bluetooth.h"
@@ -55,19 +56,19 @@
 #define NOTE_FRAME_END_SYMBOL			'\0'
 #define EMPTY_PID						((pid_t)0)
 #define EMPTY_TID						((pthread_t)0)
-#define EMPTY_SOCKET					((int)0)
+#define EMPTY_SOCKET					((int32_t)0)
 
 pthread_mutex_t tMidiAttrMutex = PTHREAD_MUTEX_INITIALIZER;
-static int __io_canceled = 0;
-static int nSocketList[MAX_CLIENT_SOCKET_CNT];
+static int32_t __io_canceled = 0;
+static int32_t nSocketList[MAX_CLIENT_SOCKET_CNT];
 char cSndPort[128];
 
-static void sig_term(int sig)
+static void sig_term(int32_t sig)
 {
 	__io_canceled = 1;
 }
 
-int getFreeClient(int* pSocketList, int nSocketListLen)
+int32_t getFreeClient(int32_t* pSocketList, int32_t nSocketListLen)
 {
 	while (nSocketListLen > 0){
 		nSocketListLen--;
@@ -77,7 +78,7 @@ int getFreeClient(int* pSocketList, int nSocketListLen)
 	}
 	return (-1);
 }
-void setSocketSlotFree(int* pSocketList, int nSocketListLen, int nSporeSocket)
+void setSocketSlotFree(int32_t* pSocketList, int32_t nSocketListLen, int32_t nSporeSocket)
 {
 	while (nSocketListLen > 0){
 		nSocketListLen--;
@@ -87,7 +88,7 @@ void setSocketSlotFree(int* pSocketList, int nSocketListLen, int nSporeSocket)
 	}
 }
 
-static int handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLength, int32_t nBuffLen)
+static int32_t handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLength, int32_t nBuffLen)
 {
 	int32_t nEndSymbolPos;
 	static char cTemp[32];
@@ -108,7 +109,7 @@ static int handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLeng
 		}
 	}
 	if (nAlreadyReadLength == nBuffLen){
-		puts("Buffer is full but no end symbol.");
+		perror("Buffer is full but no end symbol.");
 		memset(pBuff, 0, nBuffLen);
 		return 0;
 	}else{
@@ -120,48 +121,48 @@ static int handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLeng
 static void* clientService(void* pSporeSocket)
 {
 //	struct sigaction tSignalAction;
-	int nBytesRead;
+	int32_t nBytesRead;
 	snd_seq_event_t tSndSeqEvent;
 	snd_seq_t *pSeq = NULL;
-	int nClientID;
-	int nPortCount;
-	int nMyPortID = 0;
+	int32_t nClientID;
+	int32_t nPortCount;
+	int32_t nMyPortID = 0;
 	snd_seq_addr_t *pPorts = NULL;
 //	snd_seq_ev_note_t tNoteEvent;
 	char cBuff[NOTE_FRAME_LENGTH];
-	int nNeedToReadByte;
+	int32_t nNeedToReadByte;
 	int32_t nIndex;
 	uint8_t unNoteData[2];
-	int nSporeSocket = *((int*)pSporeSocket);
+	int32_t nSporeSocket = *((int32_t*)pSporeSocket);
 
-	int i;
+	int32_t i;
 
 	nClientID = nInitSeq(&pSeq);
 	if ((nClientID < 0) || (NULL == pSeq)){
-		puts("Initialize sequencer failed.");
+		perror("Initialize sequencer failed.");
 		if (pSeq != NULL){
 			snd_seq_close(pSeq);
 		}
 		return NULL;	//exit(1);
 	}
-	printf("Sequencer initialized.\n");
+	printf("  Sequencer initialized.\n");
 
 	nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
 	if (nPortCount < 1) {
-		printf("Please specify at least one port.\n");
+		printf("  Please specify at least one port.\n");
 		goto RELEASE_SOCKET;
 	}
-	printf("Sequencer ports parsed.\n");
+	printf("  Sequencer ports parsed.\n");
 
 	nMyPortID = pCreateSourcePort(pSeq);
 	if (nMyPortID < 0){
 		goto RELEASE_SOCKET;
 	}
-	printf("Sequencer source port created.\n");
+	printf("  Sequencer source port created.\n");
 	if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
 		goto RELEASE_SOCKET;
 	}
-	printf("Sequencer target port connected.\n");
+	printf("  Sequencer target port connected.\n");
 
 	snd_seq_ev_clear(&tSndSeqEvent);
     snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
@@ -184,14 +185,14 @@ static void* clientService(void* pSporeSocket)
 	while(0 == __io_canceled){
 		nBytesRead = recv(nSporeSocket, cBuff + (NOTE_FRAME_LENGTH - nNeedToReadByte), nNeedToReadByte, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
 		if(nBytesRead < 0){	//sizeof(snd_seq_event_t)) {
-			printf("Received error with code %d.\n", errno);
-			break;
+			printf("  Received error with code %d.\n", errno);
+			goto RELEASE_SOCKET;
 		}else if (0 == nBytesRead) {
-			puts("Received empty.");
+			perror("Received empty.");
 		}else{
 			// tricky, I tried my best to explain
 			for (i = 0 ; i < nBytesRead; i++){
-				printf("%02X, ", cBuff[NOTE_FRAME_LENGTH - nNeedToReadByte + i]);
+				printf("  %02X, ", cBuff[NOTE_FRAME_LENGTH - nNeedToReadByte + i]);
 				printf ("\n");
 			}
 			nNeedToReadByte -= nBytesRead;
@@ -199,7 +200,7 @@ static void* clientService(void* pSporeSocket)
 					NOTE_FRAME_LENGTH - nNeedToReadByte, NOTE_FRAME_LENGTH);
 
 			if (0 == nNeedToReadByte){
-				printf("BT received: %s\n", cBuff);
+				printf("  BT received: %s\n", cBuff);
 				for (nIndex = 0; nIndex < 2; nIndex++)
 				    sscanf(cBuff + nIndex * 2, "%2hhx", unNoteData + nIndex);
 	//			tSndSeqEvent.data.note.channel = 0;
@@ -231,26 +232,230 @@ RELEASE_SOCKET:
 //	exit(0);
 }
 
-void * updateMidiAttr(void* pWhatEver)
-{
-	pthread_mutex_lock(&tMidiAttrMutex);
+#define UPDATE_MIDI_ATTR_SOCK_PATH 		"/tmp/.midi-unix/"
 
-	pthread_mutex_unlock(&tMidiAttrMutex);
+void* updateMidiAttr(void* pWhatEver)
+{
+	int32_t nFdIndex, nRc, nOptVal = 1;
+	int32_t nServerSocket, nMaxSocketFd, nClientSocket;
+	int32_t nReadyFd;
+	uint32_t nLen;
+	uint8_t unCloseConn;
+	uint8_t unBuff[80];
+	struct sockaddr_un tServerSocketAddr, tClientSocketAddr;
+	fd_set tMasterFdSet, tWorkingFdSet;
+
+	nServerSocket = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (nServerSocket < 0){
+		perror("Create server socket failed");
+		return NULL;
+	}
+
+	/*************************************************************/
+	/* Allow socket descriptor to be reuseable                   */
+	/*************************************************************/
+	nRc = setsockopt(nServerSocket, SOL_SOCKET, SO_REUSEADDR, (char *)&nOptVal, sizeof(nOptVal));
+	if (nRc < 0){
+		perror("Set server socket reusable failed");
+		close(nServerSocket);
+		return NULL;
+	}
+
+	/*************************************************************/
+	/* Set server socket to be nonblocking. All of the sockets for */
+	/* the incoming connections will also be nonblocking since  */
+	/* they will inherit that state from the listening socket.   */
+	/*************************************************************/
+	nRc = ioctl(nServerSocket, FIONBIO, (char *)&nOptVal);
+	if (nRc < 0){
+		perror("Set server socket non-blocking failed");
+		close(nServerSocket);
+		return NULL;
+	}
+
+	memset(&tServerSocketAddr, 0, sizeof(tServerSocketAddr));
+	tServerSocketAddr.sun_family = AF_UNIX;
+	strcpy(tServerSocketAddr.sun_path, UPDATE_MIDI_ATTR_SOCK_PATH);
+	unlink(tServerSocketAddr.sun_path);
+	nLen = strlen(tServerSocketAddr.sun_path) + sizeof(tServerSocketAddr.sun_family);
+	nRc = bind(nServerSocket, (struct sockaddr *)&tServerSocketAddr, nLen);
+	if (nRc < 0){
+		perror("Server socket bind failed");
+		close(nServerSocket);
+		return NULL;
+	}
+
+	nRc = listen(nServerSocket, 8);
+	if (nRc < 0){
+		perror("Listen failed");
+		close(nServerSocket);
+		return NULL;
+	}
+
+	/*************************************************************/
+	/* Initialize the master fd_set                              */
+	/*************************************************************/
+	FD_ZERO(&tMasterFdSet);
+	nMaxSocketFd = nServerSocket;
+	FD_SET(nServerSocket, &tMasterFdSet);
+
+
+	/*************************************************************/
+	/* Loop waiting for incoming connects or for incoming data   */
+	/* on any of the connected sockets.                          */
+	/*************************************************************/
+	do{
+		memcpy(&tWorkingFdSet, &tMasterFdSet, sizeof(tMasterFdSet));
+
+		printf("  Waiting on select()...\n");
+		nRc = select(nMaxSocketFd + 1, &tWorkingFdSet, NULL, NULL, NULL);
+		if (nRc <= 0){
+			perror("Select failed");
+			break;
+		}
+
+		/**********************************************************/
+		/* One or more descriptors are readable.  Need to         */
+		/* determine which ones they are.                         */
+		/**********************************************************/
+		nReadyFd = nRc;	// nRc here is the total count of ready Fd
+		for (nFdIndex = 0; nFdIndex <= nMaxSocketFd  &&  nReadyFd > 0; ++nFdIndex){
+			if (FD_ISSET(nFdIndex, &tWorkingFdSet)){
+				nReadyFd -= 1;
+
+				/****************************************************/
+				/* Check to see if this is the listening socket     */
+				/****************************************************/
+				if (nFdIndex == nServerSocket){
+					printf("  Someone want to connect.\n");
+					/*************************************************/
+					/* Accept all incoming connections that are      */
+					/* queued up on the listening socket before we   */
+					/* loop back and call select again.              */
+					/*************************************************/
+					do{
+						/**********************************************/
+						/* Accept each incoming connection.  If       */
+						/* accept fails with EWOULDBLOCK, then we     */
+						/* have accepted all of them.  Any other      */
+						/* failure on accept will cause us to end the */
+						/* server.                                    */
+						/**********************************************/
+						nClientSocket = accept(nServerSocket, (struct sockaddr *)&tClientSocketAddr, &nLen);
+						if (nClientSocket < 0){
+							if (errno != EWOULDBLOCK){
+								perror("Accept failed and it is not because all connection has been handled.");
+								kill(getpid(), SIGINT);
+							}
+							break;
+						}
+						/**********************************************/
+						/* Add the new incoming connection to the     */
+						/* master read set                            */
+						/**********************************************/
+						printf("  New incoming connection - %d\n", nClientSocket);
+						FD_SET(nClientSocket, &tMasterFdSet);
+						if (nClientSocket > nMaxSocketFd)
+							nMaxSocketFd = nClientSocket;
+
+					/**********************************************/
+					/* Loop back up and accept another incoming   */
+					/* connection                                 */
+					/**********************************************/
+					} while (nClientSocket != -1);
+				}else{
+					/****************************************************/
+					/* This is not the listening socket, therefore an   */
+					/* existing connection must be readable             */
+					/****************************************************/
+					printf("  Client %d did something.\n", nFdIndex);
+					unCloseConn = 0;
+					/*************************************************/
+					/* Receive all incoming data on this socket      */
+					/* before we loop back and call select again.    */
+					/*************************************************/
+					do{
+						/**********************************************/
+						/* Receive data on this connection until the  */
+						/* recv fails with EWOULDBLOCK.  If any other */
+						/* failure occurs, we will close the          */
+						/* connection.                                */
+						/**********************************************/
+						nRc = recv(nFdIndex, unBuff, sizeof(unBuff), 0);
+						if (nRc < 0){
+							if (errno != EWOULDBLOCK){
+								perror("recv() failed");
+								unCloseConn = 1;
+							}
+							break;
+						}
+
+						/**********************************************/
+						/* Check to see if the connection has been    */
+						/* closed by the client                       */
+						/**********************************************/
+						if (nRc == 0){
+							printf("  Connection closed\n");
+							unCloseConn = 1;
+							break;
+						}
+
+						/**********************************************/
+						/* Data was received                          */
+						/**********************************************/
+						nLen = nRc;
+						printf("  %d bytes received\n", nLen);
+					} while (1);
+
+					/*************************************************/
+					/* If the close_conn flag was turned on, we need */
+					/* to clean up this active connection.  This     */
+					/* clean up process includes removing the        */
+					/* descriptor from the master set and            */
+					/* determining the new maximum descriptor value  */
+					/* based on the bits that are still turned on in */
+					/* the master set.                               */
+					/*************************************************/
+					if (1 == unCloseConn){
+						close(nFdIndex);
+						FD_CLR(nFdIndex, &tMasterFdSet);
+						if (nFdIndex == nMaxSocketFd){
+							while (FD_ISSET(nMaxSocketFd, &tMasterFdSet) == 0)
+								nMaxSocketFd -= 1;
+						}
+					}
+				} /* End of existing connection is readable */
+			} /* End of if (FD_ISSET(i, &working_set)) */
+		} /* End of loop through selectable descriptors */
+	} while (0 == __io_canceled);
+
+	/*************************************************************/
+	/* Clean up all of the sockets that are open                 */
+	/* Including the server socket				                 */
+	/*************************************************************/
+	for (nFdIndex = 0; nFdIndex <= nMaxSocketFd; ++nFdIndex){
+		if (FD_ISSET(nFdIndex, &tMasterFdSet))
+		close(nFdIndex);
+	}
+
+//	pthread_mutex_lock(&tMidiAttrMutex);
+//
+//	pthread_mutex_unlock(&tMidiAttrMutex);
 
 	return NULL;
 }
 
-int main(int argc, char *argv[])
+int32_t main(int32_t argc, char *argv[])
 {
 	struct sigaction tSignalAction;
 	static pthread_t tThreadList[MAX_CLIENT_SOCKET_CNT];
 	static pthread_t updateMidiAttrThread;
-	int nFreeSocketSlot;
-	int nRSTL;
+	int32_t nFreeSocketSlot;
+	int32_t nRSTL;
 	pthread_attr_t tAttr;
 
 	// bt related
-	int nServerSocket, nSporeSocket;
+	int32_t nServerSocket, nSporeSocket;
 	struct sockaddr_rc tLocalAddr, tRemoteAddr;
 	socklen_t tAddrLen;
 	char cDst[18];
@@ -264,51 +469,51 @@ int main(int argc, char *argv[])
 		{"port", 1, NULL, 'p'},
 		{}
 	};
-	int nOpt;
+	int32_t nOpt;
 	snd_seq_t *pSeq = NULL;
-	int nClientID;
-	int nPortCount;
-	int nMyPortID = 0;
-	int nDoList = 0;
+	int32_t nClientID;
+	int32_t nPortCount;
+	int32_t nMyPortID = 0;
+	int32_t nDoList = 0;
 	snd_seq_addr_t *pPorts = NULL;
 
-	puts("MIDI daemon start.");
+	printf("  MIDI daemon start.\n");
 
 	memset(nSocketList, EMPTY_SOCKET, sizeof(nSocketList));
 	memset(tThreadList, EMPTY_TID, sizeof(tThreadList));
 
 	tSignalAction.sa_handler = sig_term;
 	sigaction(SIGINT,  &tSignalAction, NULL);
-	puts("Signal registration done.");
+	printf("  Signal registration done.\n");
 
 	nRSTL = pthread_attr_init(&tAttr);
 	if (nRSTL < 0){
-		puts("Initialize thread attribute failed.");
+		perror("Initialize thread attribute failed.");
 		exit(EXIT_FAILURE);
 	}
 
 	nRSTL = pthread_attr_setdetachstate(&tAttr, PTHREAD_CREATE_DETACHED);
 	if (nRSTL < 0){
-		puts("Set thread attribute failed.");
+		perror("Set thread attribute failed.");
 		exit(EXIT_FAILURE);
 	}
 
 	nRSTL = pthread_create(&updateMidiAttrThread, &tAttr, updateMidiAttr, NULL);
 	if(nRSTL)
 	{
-		puts("Start update midi attribute thread failed.");
+		perror("Start update midi attribute thread failed.");
 		exit(EXIT_FAILURE);
 	}
 
 	nClientID = nInitSeq(&pSeq);
 	if ((nClientID < 0) || (NULL == pSeq)){
-		puts("Initialize sequencer failed.");
+		perror("Initialize sequencer failed.");
 		if (pSeq != NULL){
 			snd_seq_close(pSeq);
 		}
 		exit(1);
 	}
-	puts("Sequencer initialized.");
+	printf("  Sequencer initialized.\n");
 
 	while ((nOpt = getopt_long(argc, argv, sShortOptions, tLongOptions, NULL)) != -1) {
 		switch (nOpt) {
@@ -324,7 +529,7 @@ int main(int argc, char *argv[])
 		case 'p':
 			strcpy(cSndPort, optarg);
 			nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
-			puts("Sequencer ports parsed.");
+			printf("Sequencer ports parsed. \n");
 			break;
 		default:
 			listUsage(argv[0]);
@@ -337,7 +542,7 @@ int main(int argc, char *argv[])
 		exit(0);
 	} else {
 		if (nPortCount < 1) {
-			printf("Please specify at least one port.\n");
+			printf("  Please specify at least one port.\n");
 			erroExitHandler(pSeq, pPorts, nMyPortID);
 		}
 
@@ -345,11 +550,11 @@ int main(int argc, char *argv[])
 		if (nMyPortID < 0){
 			erroExitHandler(pSeq, pPorts, nMyPortID);
 		}
-		puts("Source sequencer port created.");
+		printf("Source sequencer port created.\n");
 		if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
 			erroExitHandler(pSeq, pPorts, nMyPortID);
 		}
-		puts("Target sequencer port connected.");
+		printf("Target sequencer port connected.\n");
 		nPlayReadyMidi(pSeq, nMyPortID);
 	}
 	// midi ready
@@ -363,28 +568,28 @@ int main(int argc, char *argv[])
 		perror("Can't open RFCOMM control socket");
 		erroExitHandler(pSeq, pPorts, nMyPortID);
 	}
-	puts("Server BT port created.");
+	printf("  Server BT port created.\n");
 
 	if (bind(nServerSocket, (struct sockaddr *)&tLocalAddr, sizeof(tLocalAddr)) < 0) {
 		perror("Can't bind RFCOMM socket");
 		close(nServerSocket);
 		erroExitHandler(pSeq, pPorts, nMyPortID);
 	}
-	puts("Server BT port binded to RFCOMM.");
+	printf("  Server BT port binded to RFCOMM.\n");
 
 	listen(nServerSocket, MAX_CLIENT_SOCKET_CNT);
 
 	tAddrLen = sizeof(tRemoteAddr);
 	while(0 == __io_canceled){
-		puts("Waiting for connection from client...");
+		printf("  Waiting for connection from client...\n");
 		nSporeSocket = accept(nServerSocket, (struct sockaddr *) &tRemoteAddr, &tAddrLen);
 		ba2str(&(tRemoteAddr.rc_bdaddr), cDst);
-		printf("Client %s connected.\n", cDst);
+		printf("  Client %s connected.\n", cDst);
 		nFreeSocketSlot = getFreeClient(nSocketList, MAX_CLIENT_SOCKET_CNT);
 		if ((-1) == nFreeSocketSlot){
 			close(nSporeSocket);
 			perror("Threads are fully powered, don't push me too hard.");
-			printf("Socket %d nSporeSocket closed by server.\n", nSporeSocket);
+			printf("  Socket %d nSporeSocket closed by server.\n", nSporeSocket);
 			continue;
 		}
 		nSocketList[nFreeSocketSlot] = nSporeSocket;
