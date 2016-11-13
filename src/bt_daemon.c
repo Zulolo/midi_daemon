@@ -232,7 +232,13 @@ RELEASE_SOCKET:
 //	exit(0);
 }
 
-#define UPDATE_MIDI_ATTR_SOCK_PATH 		"/tmp/.midi-unix/"
+int32_t executeCmdFromUnixSocket(uint8_t* pBuff, int32_t nRc)
+{
+	printf("  %d bytes received\n", nRc);
+	return 0;
+}
+
+#define UPDATE_MIDI_ATTR_SOCK_PATH 		"/tmp/.midi-unix"
 
 void* updateMidiAttr(void* pWhatEver)
 {
@@ -241,7 +247,7 @@ void* updateMidiAttr(void* pWhatEver)
 	int32_t nReadyFd;
 	uint32_t nLen;
 	uint8_t unCloseConn;
-	uint8_t unBuff[80];
+	uint8_t unBuff[128];
 	struct sockaddr_un tServerSocketAddr, tClientSocketAddr;
 	fd_set tMasterFdSet, tWorkingFdSet;
 
@@ -403,8 +409,7 @@ void* updateMidiAttr(void* pWhatEver)
 						/**********************************************/
 						/* Data was received                          */
 						/**********************************************/
-						nLen = nRc;
-						printf("  %d bytes received\n", nLen);
+						executeCmdFromUnixSocket(unBuff, nRc);
 					} while (1);
 
 					/*************************************************/
