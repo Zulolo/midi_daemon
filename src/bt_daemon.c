@@ -64,6 +64,13 @@ static int32_t __io_canceled = 0;
 static int32_t nSocketList[MAX_CLIENT_SOCKET_CNT];
 char cSndPort[128];
 
+int32_t nProgramChange(snd_seq_t *pSeq, int32_t nMyPortID, uint32_t unChannel,
+		uint32_t unProgram, uint32_t unUseless1, uint32_t unUseless2);
+// Something interesting:
+const char* MIDI_EVENT_UNIX_FORMAT[] = {"channel:%u,instrument:%u,EMPTY_PARA_1:%u,EMPTY_PARA_2:%u\n",
+										""};
+int32_t (*MIDI_EVENT_UNIX_FUNCTION[])() = {nProgramChange, NULL};
+
 static void sig_term(int32_t sig)
 {
 	__io_canceled = 1;
@@ -89,6 +96,11 @@ void setSocketSlotFree(int32_t* pSocketList, int32_t nSocketListLen, int32_t nSp
 	}
 }
 
+int32_t nProgramChange(snd_seq_t *pSeq, int32_t nMyPortID, uint32_t unChannel,
+		uint32_t unProgram, uint32_t unUseless1, uint32_t unUseless2){
+
+	return 0;
+}
 static int32_t handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLength, int32_t nBuffLen)
 {
 	int32_t nEndSymbolPos;
@@ -146,24 +158,24 @@ static void* clientService(void* pSporeSocket)
 		}
 		return NULL;	//exit(1);
 	}
-	printf("  Sequencer initialized.\n");
+	printf("  Sequencer initialized by new BT connection.\n");
 
 	nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
 	if (nPortCount < 1) {
 		printf("  Please specify at least one port.\n");
 		goto RELEASE_SOCKET;
 	}
-	printf("  Sequencer ports parsed.\n");
+	printf("  Sequencer ports parsed by new BT connection.\n");
 
 	nMyPortID = pCreateSourcePort(pSeq);
 	if (nMyPortID < 0){
 		goto RELEASE_SOCKET;
 	}
-	printf("  Sequencer source port created.\n");
+	printf("  Sequencer source port created by new BT connection.\n");
 	if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
 		goto RELEASE_SOCKET;
 	}
-	printf("  Sequencer target port connected.\n");
+	printf("  Sequencer target port connected by new BT connection.\n");
 
 	snd_seq_ev_clear(&tSndSeqEvent);
     snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
@@ -233,9 +245,24 @@ RELEASE_SOCKET:
 //	exit(0);
 }
 
-int32_t executeCmdFromUnixSocket(uint8_t* pBuff, int32_t nRc)
+int32_t executeCmdFromUnixSocket(uint8_t* pBuff, int32_t nRc, snd_seq_t *pSeq, int32_t nMyPortID)
 {
+	snd_seq_event_t tSndSeqEvent;
 	printf("  %d bytes received\n", nRc);
+	//	pthread_mutex_lock(&tMidiAttrMutex);
+	//
+	//	pthread_mutex_unlock(&tMidiAttrMutex);
+	snd_seq_ev_clear(&tSndSeqEvent);
+    snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
+    snd_seq_ev_set_subs(&tSndSeqEvent);
+    snd_seq_ev_set_direct(&tSndSeqEvent);
+	snd_seq_ev_set_fixed(&tSndSeqEvent);
+
+	tSndSeqEvent.type = SND_SEQ_EVENT_PGMCHANGE;
+	tSndSeqEvent.data.control.channel = 0;
+	tSndSeqEvent.data.control.value = 1;
+	snd_seq_event_output(pSeq, &tSndSeqEvent);
+	snd_seq_drain_output(pSeq);
 	return 0;
 }
 
@@ -243,6 +270,11 @@ int32_t executeCmdFromUnixSocket(uint8_t* pBuff, int32_t nRc)
 
 void* updateMidiAttr(void* pWhatEver)
 {
+	snd_seq_t *pSeq = NULL;
+	int32_t nClientID;
+	int32_t nPortCount;
+	int32_t nMyPortID = 0;
+	snd_seq_addr_t *pPorts = NULL;
 	int32_t nFdIndex, nRc, nOptVal = 1;
 	int32_t nServerSocket, nMaxSocketFd, nClientSocket;
 	int32_t nReadyFd;
@@ -252,10 +284,40 @@ void* updateMidiAttr(void* pWhatEver)
 	struct sockaddr_un tServerSocketAddr, tClientSocketAddr;
 	fd_set tMasterFdSet, tWorkingFdSet;
 
+	nClientID = nInitSeq(&pSeq);
+	if ((nClientID < 0) || (NULL == pSeq)){
+		perror("Initialize sequencer failed in IPC server.");
+		if (pSeq != NULL){
+			snd_seq_close(pSeq);
+		}
+		return NULL;	//exit(1);
+	}
+	printf("  Sequencer initialized by IPC server.\n");
+
+	nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
+	if (nPortCount < 1) {
+		printf("  Please specify at least one port.\n");
+		goto RELEASE_IPC_SEQ;
+	}
+	printf("  Sequencer ports parsed by IPC server.\n");
+
+	nMyPortID = pCreateSourcePort(pSeq);
+	if (nMyPortID < 0){
+		goto RELEASE_IPC_SEQ;
+	}
+	printf("  Sequencer source port created by IPC server.\n");
+	if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
+		goto RELEASE_IPC_SEQ;
+	}
+	printf("  Sequencer target port connected by IPC server.\n");
+
+
+	/* ----==== All Sequencer initialize stuff ends here ====----*/
+
 	nServerSocket = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (nServerSocket < 0){
-		perror("Create server socket failed");
-		return NULL;
+		perror("Create Unix server socket failed.");
+		goto RELEASE_IPC_SEQ;
 	}
 
 	/*************************************************************/
@@ -265,7 +327,7 @@ void* updateMidiAttr(void* pWhatEver)
 	if (nRc < 0){
 		perror("Set server socket reusable failed");
 		close(nServerSocket);
-		return NULL;
+		goto RELEASE_IPC_SEQ;
 	}
 
 	/*************************************************************/
@@ -277,7 +339,7 @@ void* updateMidiAttr(void* pWhatEver)
 	if (nRc < 0){
 		perror("Set server socket non-blocking failed");
 		close(nServerSocket);
-		return NULL;
+		goto RELEASE_IPC_SEQ;
 	}
 
 	memset(&tServerSocketAddr, 0, sizeof(tServerSocketAddr));
@@ -289,14 +351,14 @@ void* updateMidiAttr(void* pWhatEver)
 	if (nRc < 0){
 		perror("Server socket bind failed");
 		close(nServerSocket);
-		return NULL;
+		goto RELEASE_IPC_SEQ;
 	}
 	chmod(UPDATE_MIDI_ATTR_SOCK_PATH, S_IRWXU|S_IRWXG);
 	nRc = listen(nServerSocket, 8);
 	if (nRc < 0){
 		perror("Listen failed");
 		close(nServerSocket);
-		return NULL;
+		goto RELEASE_IPC_SEQ;
 	}
 
 	/*************************************************************/
@@ -410,7 +472,7 @@ void* updateMidiAttr(void* pWhatEver)
 						/**********************************************/
 						/* Data was received                          */
 						/**********************************************/
-						executeCmdFromUnixSocket(unBuff, nRc);
+						executeCmdFromUnixSocket(unBuff, nRc, pSeq, nMyPortID);
 					} while (1);
 
 					/*************************************************/
@@ -444,10 +506,16 @@ void* updateMidiAttr(void* pWhatEver)
 		close(nFdIndex);
 	}
 
-//	pthread_mutex_lock(&tMidiAttrMutex);
-//
-//	pthread_mutex_unlock(&tMidiAttrMutex);
-
+	RELEASE_IPC_SEQ:
+	if (pPorts != NULL){
+		free(pPorts);
+	}
+	if (nMyPortID >= 0){
+		snd_seq_delete_port(pSeq, nMyPortID);
+	}
+	if (pSeq != NULL){
+		snd_seq_close(pSeq);
+	}
 	return NULL;
 }
 
