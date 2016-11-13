@@ -38,6 +38,7 @@
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/un.h>
 #include <pthread.h>
@@ -290,7 +291,7 @@ void* updateMidiAttr(void* pWhatEver)
 		close(nServerSocket);
 		return NULL;
 	}
-
+	chmod(UPDATE_MIDI_ATTR_SOCK_PATH, S_IRWXU|S_IRWXG);
 	nRc = listen(nServerSocket, 8);
 	if (nRc < 0){
 		perror("Listen failed");
