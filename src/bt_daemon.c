@@ -59,17 +59,26 @@
 #define EMPTY_TID						((pthread_t)0)
 #define EMPTY_SOCKET					((int32_t)0)
 
+typedef struct  {
+  int32_t nVolume;
+}midi_para_t;
+
 pthread_mutex_t tMidiAttrMutex = PTHREAD_MUTEX_INITIALIZER;
 static int32_t __io_canceled = 0;
 static int32_t nSocketList[MAX_CLIENT_SOCKET_CNT];
+static midi_para_t tMidiPara = {.nVolume = 50};
 char cSndPort[128];
 
-int32_t nProgramChange(snd_seq_t *pSeq, int32_t nMyPortID, uint32_t unChannel,
-		uint32_t unProgram, uint32_t unUseless1, uint32_t unUseless2);
+int32_t nProgramChange(snd_seq_t *pSeq, int32_t nMyPortID, int32_t nChannel,
+		int32_t nProgram, int32_t nUseless1, int32_t nUseless2);
+int32_t nSetVolume(snd_seq_t *pSeq, int32_t nMyPortID, int32_t nVolume,
+		int32_t nUseless1, int32_t nUseless2, int32_t nUseless3);
+
+
 // Something interesting:
-const char* MIDI_EVENT_UNIX_FORMAT[] = {"channel:%u,instrument:%u,EMPTY_PARA_1:%u,EMPTY_PARA_2:%u\n",
-										""};
-int32_t (*MIDI_EVENT_UNIX_FUNCTION[])() = {nProgramChange, NULL};
+const char* MIDI_EVENT_UNIX_FORMAT[] = {"channel:%d,instrument:%d,EMPTY_PARA_1:%d,EMPTY_PARA_2:%d\n",
+		"volume:%d,EMPTY_PARA_1:%d,EMPTY_PARA_2:%d,EMPTY_PARA_3:%d\n"};
+int32_t (*MIDI_EVENT_UNIX_FUNCTION[])() = {nProgramChange, nSetVolume};
 
 static void sig_term(int32_t sig)
 {
@@ -96,11 +105,51 @@ void setSocketSlotFree(int32_t* pSocketList, int32_t nSocketListLen, int32_t nSp
 	}
 }
 
-int32_t nProgramChange(snd_seq_t *pSeq, int32_t nMyPortID, uint32_t unChannel,
-		uint32_t unProgram, uint32_t unUseless1, uint32_t unUseless2){
-
+int32_t nSetVolume(snd_seq_t *pSeq, int32_t nMyPortID, int32_t nVolume,
+		int32_t nUseless1, int32_t nUseless2, int32_t nUseless3)
+{
+	pthread_mutex_lock(&tMidiAttrMutex);
+	tMidiPara.nVolume = nVolume;
+	pthread_mutex_unlock(&tMidiAttrMutex);
 	return 0;
 }
+int32_t nProgramChange(snd_seq_t *pSeq, int32_t nMyPortID, int32_t nChannel,
+		int32_t nProgram, int32_t nUseless1, int32_t nUseless2)
+{
+	snd_seq_event_t tSndSeqEvent;
+
+	//	pthread_mutex_lock(&tMidiAttrMutex);
+	//
+	//	pthread_mutex_unlock(&tMidiAttrMutex);
+
+	snd_seq_ev_clear(&tSndSeqEvent);
+    snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
+    snd_seq_ev_set_subs(&tSndSeqEvent);
+    snd_seq_ev_set_direct(&tSndSeqEvent);
+	snd_seq_ev_set_fixed(&tSndSeqEvent);
+
+	tSndSeqEvent.type = SND_SEQ_EVENT_PGMCHANGE;
+	tSndSeqEvent.data.control.channel = nChannel;
+	tSndSeqEvent.data.control.value = nProgram;
+	snd_seq_event_output(pSeq, &tSndSeqEvent);
+	snd_seq_drain_output(pSeq);
+	return 0;
+}
+
+int32_t executeCmdFromUnixSocket(uint8_t* pBuff, int32_t nRc, snd_seq_t *pSeq, int32_t nMyPortID)
+{
+	int32_t nIndex;
+	int32_t nPara1, nPara2, nPara3, nPara4;
+	pBuff[nRc] = '\0';
+	printf("  Received: %s", pBuff);
+	for (nIndex = 0; nIndex < sizeof(MIDI_EVENT_UNIX_FORMAT); nIndex++){
+		if (4 == sscanf(pBuff, MIDI_EVENT_UNIX_FORMAT[nIndex], &nPara1, &nPara2, &nPara3, &nPara4)){
+			return MIDI_EVENT_UNIX_FUNCTION[nIndex](nPara1, nPara2, nPara3, nPara4);
+		}
+	}
+	return (-1);
+}
+
 static int32_t handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyReadLength, int32_t nBuffLen)
 {
 	int32_t nEndSymbolPos;
@@ -218,7 +267,9 @@ static void* clientService(void* pSporeSocket)
 				    sscanf(cBuff + nIndex * 2, "%2hhx", unNoteData + nIndex);
 	//			tSndSeqEvent.data.note.channel = 0;
 				tSndSeqEvent.data.note.note = unNoteData[0];
-			    tSndSeqEvent.data.note.velocity = unNoteData[1];
+				pthread_mutex_lock(&tMidiAttrMutex);
+				tSndSeqEvent.data.note.velocity = tMidiPara.nVolume;
+				pthread_mutex_unlock(&tMidiAttrMutex);
 
 	//			tSndSeqEvent.data.note = tNoteEvent;
 				snd_seq_event_output(pSeq, &tSndSeqEvent);
@@ -243,27 +294,6 @@ RELEASE_SOCKET:
 	}
 	return NULL;
 //	exit(0);
-}
-
-int32_t executeCmdFromUnixSocket(uint8_t* pBuff, int32_t nRc, snd_seq_t *pSeq, int32_t nMyPortID)
-{
-	snd_seq_event_t tSndSeqEvent;
-	printf("  %d bytes received\n", nRc);
-	//	pthread_mutex_lock(&tMidiAttrMutex);
-	//
-	//	pthread_mutex_unlock(&tMidiAttrMutex);
-	snd_seq_ev_clear(&tSndSeqEvent);
-    snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
-    snd_seq_ev_set_subs(&tSndSeqEvent);
-    snd_seq_ev_set_direct(&tSndSeqEvent);
-	snd_seq_ev_set_fixed(&tSndSeqEvent);
-
-	tSndSeqEvent.type = SND_SEQ_EVENT_PGMCHANGE;
-	tSndSeqEvent.data.control.channel = 0;
-	tSndSeqEvent.data.control.value = 1;
-	snd_seq_event_output(pSeq, &tSndSeqEvent);
-	snd_seq_drain_output(pSeq);
-	return 0;
 }
 
 #define UPDATE_MIDI_ATTR_SOCK_PATH 		"/tmp/.midi-unix"
@@ -472,6 +502,8 @@ void* updateMidiAttr(void* pWhatEver)
 						/**********************************************/
 						/* Data was received                          */
 						/**********************************************/
+						unBuff[nRc] = '\0';
+						printf("  Received:%s\n", unBuff);
 						executeCmdFromUnixSocket(unBuff, nRc, pSeq, nMyPortID);
 					} while (1);
 
