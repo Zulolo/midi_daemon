@@ -53,7 +53,8 @@
 #include "midi.h"
 
 #define MAX_CLIENT_SOCKET_CNT			10
-#define NOTE_FRAME_LENGTH				5	// AE2C\n
+#define NOTE_FRAME_LENGTH				sizeof("01AE2C")	// channel+note+velocity
+#define NOTE_FRAME_DATA_NUMBER			((NOTE_FRAME_LENGTH - 1)/2)
 #define NOTE_FRAME_END_SYMBOL			'\0'
 #define EMPTY_PID						((pid_t)0)
 #define EMPTY_TID						((pthread_t)0)
@@ -108,6 +109,7 @@ void setSocketSlotFree(int32_t* pSocketList, int32_t nSocketListLen, int32_t nSp
 int32_t nSetVolume(snd_seq_t *pSeq, int32_t nMyPortID, int32_t nVolume,
 		int32_t nUseless1, int32_t nUseless2, int32_t nUseless3)
 {
+	printf("  Set volume to %d.\n", nVolume);
 	pthread_mutex_lock(&tMidiAttrMutex);
 	tMidiPara.nVolume = nVolume;
 	pthread_mutex_unlock(&tMidiAttrMutex);
@@ -117,11 +119,7 @@ int32_t nProgramChange(snd_seq_t *pSeq, int32_t nMyPortID, int32_t nChannel,
 		int32_t nProgram, int32_t nUseless1, int32_t nUseless2)
 {
 	snd_seq_event_t tSndSeqEvent;
-
-	//	pthread_mutex_lock(&tMidiAttrMutex);
-	//
-	//	pthread_mutex_unlock(&tMidiAttrMutex);
-
+	printf("  Set channel %d's program to %d.\n", nChannel, nProgram);
 	snd_seq_ev_clear(&tSndSeqEvent);
     snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
     snd_seq_ev_set_subs(&tSndSeqEvent);
@@ -136,15 +134,14 @@ int32_t nProgramChange(snd_seq_t *pSeq, int32_t nMyPortID, int32_t nChannel,
 	return 0;
 }
 
-int32_t executeCmdFromUnixSocket(uint8_t* pBuff, int32_t nRc, snd_seq_t *pSeq, int32_t nMyPortID)
+int32_t executeCmdFromUnixSocket(const char* pBuff, int32_t nRc, snd_seq_t *pSeq, int32_t nMyPortID)
 {
 	int32_t nIndex;
 	int32_t nPara1, nPara2, nPara3, nPara4;
-	pBuff[nRc] = '\0';
 	printf("  Received: %s", pBuff);
 	for (nIndex = 0; nIndex < sizeof(MIDI_EVENT_UNIX_FORMAT); nIndex++){
 		if (4 == sscanf(pBuff, MIDI_EVENT_UNIX_FORMAT[nIndex], &nPara1, &nPara2, &nPara3, &nPara4)){
-			return MIDI_EVENT_UNIX_FUNCTION[nIndex](nPara1, nPara2, nPara3, nPara4);
+			return MIDI_EVENT_UNIX_FUNCTION[nIndex](pSeq, nMyPortID, nPara1, nPara2, nPara3, nPara4);
 		}
 	}
 	return (-1);
@@ -194,10 +191,10 @@ static void* clientService(void* pSporeSocket)
 	char cBuff[NOTE_FRAME_LENGTH];
 	int32_t nNeedToReadByte;
 	int32_t nIndex;
-	uint8_t unNoteData[2];
+	uint8_t unNoteData[NOTE_FRAME_DATA_NUMBER];
 	int32_t nSporeSocket = *((int32_t*)pSporeSocket);
-
-	int32_t i;
+//
+//	int32_t i;
 
 	nClientID = nInitSeq(&pSeq);
 	if ((nClientID < 0) || (NULL == pSeq)){
@@ -234,14 +231,7 @@ static void* clientService(void* pSporeSocket)
 
 	nPlayConnectedMidi(pSeq, nMyPortID);
 
-	tSndSeqEvent.type = SND_SEQ_EVENT_PGMCHANGE;
-	tSndSeqEvent.data.control.channel = 0;
-	tSndSeqEvent.data.control.value = 1;
-	snd_seq_event_output(pSeq, &tSndSeqEvent);
-	snd_seq_drain_output(pSeq);
-
 	tSndSeqEvent.type = SND_SEQ_EVENT_NOTEON;
-	tSndSeqEvent.data.note.channel = 0;
 	nNeedToReadByte = NOTE_FRAME_LENGTH;
 	memset(cBuff, 0, sizeof(cBuff));
 	while(0 == __io_canceled){
@@ -253,25 +243,30 @@ static void* clientService(void* pSporeSocket)
 			perror("Received empty.");
 		}else{
 			// tricky, I tried my best to explain
-			for (i = 0 ; i < nBytesRead; i++){
-				printf("  %02X, ", cBuff[NOTE_FRAME_LENGTH - nNeedToReadByte + i]);
-				printf ("\n");
-			}
+//			for (i = 0 ; i < nBytesRead; i++){
+//				printf("  %02X, ", cBuff[NOTE_FRAME_LENGTH - nNeedToReadByte + i]);
+//				printf ("\n");
+//			}
 			nNeedToReadByte -= nBytesRead;
 			nNeedToReadByte = NOTE_FRAME_LENGTH - handleReceivedDataCrossTwoFrame(cBuff,
 					NOTE_FRAME_LENGTH - nNeedToReadByte, NOTE_FRAME_LENGTH);
 
 			if (0 == nNeedToReadByte){
 				printf("  BT received: %s\n", cBuff);
-				for (nIndex = 0; nIndex < 2; nIndex++)
+				for (nIndex = 0; nIndex < NOTE_FRAME_DATA_NUMBER; nIndex++)
 				    sscanf(cBuff + nIndex * 2, "%2hhx", unNoteData + nIndex);
-	//			tSndSeqEvent.data.note.channel = 0;
-				tSndSeqEvent.data.note.note = unNoteData[0];
-				pthread_mutex_lock(&tMidiAttrMutex);
-				tSndSeqEvent.data.note.velocity = tMidiPara.nVolume;
-				pthread_mutex_unlock(&tMidiAttrMutex);
+				printf("  Channel is: %u, Note is: %u, velocity is: %u.\n",
+						unNoteData[0], unNoteData[1], unNoteData[2]);
+				tSndSeqEvent.data.note.channel = unNoteData[0];
+				if (0 == unNoteData[1]){
+					tSndSeqEvent.data.note.velocity = 0;
+				}else{
+					tSndSeqEvent.data.note.note = unNoteData[1];
+	//				pthread_mutex_lock(&tMidiAttrMutex);
+					tSndSeqEvent.data.note.velocity = unNoteData[2];	//tMidiPara.nVolume;
+	//				pthread_mutex_unlock(&tMidiAttrMutex);
+				}
 
-	//			tSndSeqEvent.data.note = tNoteEvent;
 				snd_seq_event_output(pSeq, &tSndSeqEvent);
 				snd_seq_drain_output(pSeq);
 				nNeedToReadByte = NOTE_FRAME_LENGTH;
@@ -310,7 +305,7 @@ void* updateMidiAttr(void* pWhatEver)
 	int32_t nReadyFd;
 	uint32_t nLen;
 	uint8_t unCloseConn;
-	uint8_t unBuff[128];
+	char cBuff[128];
 	struct sockaddr_un tServerSocketAddr, tClientSocketAddr;
 	fd_set tMasterFdSet, tWorkingFdSet;
 
@@ -480,7 +475,7 @@ void* updateMidiAttr(void* pWhatEver)
 						/* failure occurs, we will close the          */
 						/* connection.                                */
 						/**********************************************/
-						nRc = recv(nFdIndex, unBuff, sizeof(unBuff), 0);
+						nRc = recv(nFdIndex, cBuff, sizeof(cBuff), 0);
 						if (nRc < 0){
 							if (errno != EWOULDBLOCK){
 								perror("recv() failed");
@@ -502,9 +497,8 @@ void* updateMidiAttr(void* pWhatEver)
 						/**********************************************/
 						/* Data was received                          */
 						/**********************************************/
-						unBuff[nRc] = '\0';
-						printf("  Received:%s\n", unBuff);
-						executeCmdFromUnixSocket(unBuff, nRc, pSeq, nMyPortID);
+						cBuff[nRc] = '\0';
+						executeCmdFromUnixSocket(cBuff, nRc, pSeq, nMyPortID);
 					} while (1);
 
 					/*************************************************/
