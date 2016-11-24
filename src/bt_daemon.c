@@ -53,7 +53,7 @@
 #include "midi.h"
 
 #define MAX_CLIENT_SOCKET_CNT			10
-#define NOTE_FRAME_LENGTH				sizeof("01AE2C")	// channel+note+velocity
+#define NOTE_FRAME_LENGTH				sizeof("0601AE2C")	// type+channel+note+velocity
 #define NOTE_FRAME_DATA_NUMBER			((NOTE_FRAME_LENGTH - 1)/2)
 #define NOTE_FRAME_END_SYMBOL			'\0'
 #define EMPTY_PID						((pid_t)0)
@@ -256,14 +256,14 @@ static void* clientService(void* pSporeSocket)
 				for (nIndex = 0; nIndex < NOTE_FRAME_DATA_NUMBER; nIndex++)
 				    sscanf(cBuff + nIndex * 2, "%2hhx", unNoteData + nIndex);
 				printf("  Channel is: %u, Note is: %u, velocity is: %u.\n",
-						unNoteData[0], unNoteData[1], unNoteData[2]);
-				tSndSeqEvent.data.note.channel = unNoteData[0];
+						unNoteData[1], unNoteData[2], unNoteData[3]);
+				tSndSeqEvent.data.note.channel = unNoteData[1];
 				if (0 == unNoteData[1]){
 					tSndSeqEvent.data.note.velocity = 0;
 				}else{
-					tSndSeqEvent.data.note.note = unNoteData[1];
+					tSndSeqEvent.data.note.note = unNoteData[2];
 	//				pthread_mutex_lock(&tMidiAttrMutex);
-					tSndSeqEvent.data.note.velocity = unNoteData[2];	//tMidiPara.nVolume;
+					tSndSeqEvent.data.note.velocity = unNoteData[3];	//tMidiPara.nVolume;
 	//				pthread_mutex_unlock(&tMidiAttrMutex);
 				}
 
