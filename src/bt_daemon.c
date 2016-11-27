@@ -231,7 +231,6 @@ static void* clientService(void* pSporeSocket)
 
 	nPlayConnectedMidi(pSeq, nMyPortID);
 
-	tSndSeqEvent.type = SND_SEQ_EVENT_NOTEON;
 	nNeedToReadByte = NOTE_FRAME_LENGTH;
 	memset(cBuff, 0, sizeof(cBuff));
 	while(0 == __io_canceled){
@@ -255,18 +254,14 @@ static void* clientService(void* pSporeSocket)
 				printf("  BT received: %s\n", cBuff);
 				for (nIndex = 0; nIndex < NOTE_FRAME_DATA_NUMBER; nIndex++)
 				    sscanf(cBuff + nIndex * 2, "%2hhx", unNoteData + nIndex);
-				printf("  Channel is: %u, Note is: %u, velocity is: %u.\n",
-						unNoteData[1], unNoteData[2], unNoteData[3]);
+				printf("  Type is: %u, Channel is: %u, Note is: %u, velocity is: %u.\n",
+						unNoteData[0], unNoteData[1], unNoteData[2], unNoteData[3]);
+				tSndSeqEvent.type = unNoteData[0];
 				tSndSeqEvent.data.note.channel = unNoteData[1];
-				if (0 == unNoteData[1]){
-					tSndSeqEvent.data.note.velocity = 0;
-				}else{
-					tSndSeqEvent.data.note.note = unNoteData[2];
-	//				pthread_mutex_lock(&tMidiAttrMutex);
-					tSndSeqEvent.data.note.velocity = unNoteData[3];	//tMidiPara.nVolume;
-	//				pthread_mutex_unlock(&tMidiAttrMutex);
-				}
-
+				tSndSeqEvent.data.note.note = unNoteData[2];
+//				pthread_mutex_lock(&tMidiAttrMutex);
+				tSndSeqEvent.data.note.velocity = unNoteData[3];	//tMidiPara.nVolume;
+//				pthread_mutex_unlock(&tMidiAttrMutex);
 				snd_seq_event_output(pSeq, &tSndSeqEvent);
 				snd_seq_drain_output(pSeq);
 				nNeedToReadByte = NOTE_FRAME_LENGTH;
