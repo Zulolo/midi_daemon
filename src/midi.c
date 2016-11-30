@@ -223,23 +223,6 @@ int32_t nPlayReadyMidi(snd_seq_t *pSeq, int32_t nMyPortID)
 		tEvent.data.note.velocity = 0;
 		snd_seq_event_output(pSeq, &tEvent);
 		snd_seq_drain_output(pSeq);
-//		usleep(300000);
-
-		tEvent.type = SND_SEQ_EVENT_NOTEON;
-		tEvent.data.note.channel = 0;
-		tEvent.data.note.note = 80;
-		tEvent.data.note.velocity = 80;
-		snd_seq_event_output(pSeq, &tEvent);
-		snd_seq_drain_output(pSeq);
-		usleep(300000);
-
-		tEvent.type = SND_SEQ_EVENT_NOTEOFF;
-		tEvent.data.note.channel = 0;
-		tEvent.data.note.note = 80;
-		tEvent.data.note.velocity = 0;
-		snd_seq_event_output(pSeq, &tEvent);
-		snd_seq_drain_output(pSeq);
-//		usleep(300000);
     }
 
 	return 0;
@@ -278,23 +261,6 @@ int32_t nPlayConnectedMidi(snd_seq_t *pSeq, int32_t nMyPortID)
 		tEvent.data.note.velocity = 0;
 		snd_seq_event_output(pSeq, &tEvent);
 		snd_seq_drain_output(pSeq);
-//		usleep(300000);
-
-		tEvent.type = SND_SEQ_EVENT_NOTEON;
-		tEvent.data.note.channel = 0;
-		tEvent.data.note.note = 60;
-		tEvent.data.note.velocity = 80;
-		snd_seq_event_output(pSeq, &tEvent);
-		snd_seq_drain_output(pSeq);
-		usleep(300000);
-
-		tEvent.type = SND_SEQ_EVENT_NOTEOFF;
-		tEvent.data.note.channel = 0;
-		tEvent.data.note.note = 60;
-		tEvent.data.note.velocity = 0;
-		snd_seq_event_output(pSeq, &tEvent);
-		snd_seq_drain_output(pSeq);
-//		usleep(300000);
     }
 
 	return 0;

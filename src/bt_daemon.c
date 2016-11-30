@@ -59,6 +59,7 @@
 #define EMPTY_PID						((pid_t)0)
 #define EMPTY_TID						((pthread_t)0)
 #define EMPTY_SOCKET					((int32_t)0)
+#define SERIAL_PORT_BAUDRATE 			B115200
 
 typedef struct  {
   int32_t nVolume;
@@ -177,16 +178,189 @@ static int32_t handleReceivedDataCrossTwoFrame(char* pBuff, int32_t nAlreadyRead
 
 }
 
-static void* clientService(void* pSporeSocket)
+typedef struct{
+	snd_seq_t *pSeq;
+	snd_seq_addr_t *pPorts;
+	int32_t nClientID;
+	int32_t nPortCount;
+	int32_t nMyPortID;
+}SeqForThread_t;
+
+int32_t prepareSeqInforForThread(SeqForThread_t* pSeqInfor)
+{
+	pSeqInfor->nClientID = nInitSeq(&pSeq);
+	if ((pSeqInfor->nClientID < 0) || (NULL == pSeqInfor->pSeq)){
+		perror("Initialize sequencer failed.");
+		if (pSeqInfor->pSeq != NULL){
+			snd_seq_close(pSeq);
+		}
+		return(-1);
+	}
+
+	pSeqInfor->nPortCount = nParsePorts(cSndPort, &(pSeqInfor->pPorts), pSeqInfor->pSeq);
+	if (pSeqInfor->nPortCount < 1) {
+		perror("Please specify at least one port.");
+		return(-1);
+	}
+
+	pSeqInfor->nMyPortID = pCreateSourcePort(pSeqInfor->pSeq);
+	if (pSeqInfor->nMyPortID < 0){
+		perror("Create source port.");
+		return(-1);
+	}
+
+	if (nConnectPorts(pSeqInfor->pSeq, pSeqInfor->nPortCount, pSeqInfor->pPorts) < 0){
+		perror("Connect to port.");
+		return(-1);
+	}
+	return 0;
+}
+
+int32_t generateEventContent(snd_seq_event_t* pSndSeqEvent, char* pEventString)
+{
+	int32_t nIndex;
+	uint8_t unEventData[NOTE_FRAME_DATA_NUMBER];
+	for (nIndex = 0; nIndex < NOTE_FRAME_DATA_NUMBER; nIndex++)
+	    sscanf(pEventString + nIndex * 2, "%2hhx", unEventData + nIndex);
+
+//	printf("  Type is: %u, Channel is: %u, Note is: %u, velocity is: %u.\n",
+//			unEventData[0], unEventData[1], unEventData[2], unEventData[3]);
+	pSndSeqEvent->type = unEventData[0];
+	pSndSeqEvent->data.note.channel = unEventData[1];
+	pSndSeqEvent->data.note.note = unEventData[2];
+//				pthread_mutex_lock(&tMidiAttrMutex);
+	pSndSeqEvent->data.note.velocity = unEventData[3];	//tMidiPara.nVolume;
+//				pthread_mutex_unlock(&tMidiAttrMutex);
+	return 0;
+}
+
+void* UART_clientService(void* pSerialPort)
+{
+	int32_t nBytesRead;
+	snd_seq_event_t tSndSeqEvent;
+	SeqForThread_t tSeqInfo;
+	char cBuff[NOTE_FRAME_LENGTH];
+	int32_t nReadByte;
+	int32_t nIndex;
+	uint8_t unNoteData[NOTE_FRAME_DATA_NUMBER];
+	int32_t nSerialPortFd;
+	struct termios tSerial;
+
+	nSerialPortFd = open(pSerialPort, O_RDWR | O_NOCTTY | O_NDELAY);
+
+    if (nSerialPortFd < 0) {
+    	perror("Open serial port failed.");
+        return NULL;
+    }
+
+//    if (tcgetattr(nSerialPortFd, &tSerial) < 0) {
+//        perror("Getting serial configuration failed");
+//        return NULL;
+//    }
+    memset(&tSerial, 0, sizeof(tSerial));
+    /*
+      BAUDRATE: Set bps rate. You could also use cfsetispeed and cfsetospeed.
+      CS8     : 8n1 (8bit,no parity,1 stopbit)
+      CLOCAL  : local connection, no modem contol
+      CREAD   : enable receiving characters
+    */
+    tSerial.c_cflag = SERIAL_PORT_BAUDRATE | CS8 | CLOCAL | CREAD;
+
+    /*
+      IGNPAR  : ignore bytes with parity errors
+      ICRNL   : map CR to NL (otherwise a CR input on the other computer
+                will not terminate input)
+      otherwise make device raw (no other input processing)
+    */
+    tSerial.c_iflag = IGNPAR | ICRNL;
+
+    /*
+     Raw output.
+    */
+    tSerial.c_oflag = 0;
+
+    /*
+      ICANON  : enable canonical input
+      disable all echo functionality, and don't send signals to calling program
+    */
+    tSerial.c_lflag = ICANON;
+
+    /*
+      initialize all control characters
+      default values can be found in /usr/include/termios.h, and are given
+      in the comments, but we don't need them here
+    */
+    tSerial.c_cc[VINTR]    = 0;     /* Ctrl-c */
+    tSerial.c_cc[VQUIT]    = 0;     /* Ctrl-\ */
+    tSerial.c_cc[VERASE]   = 0;     /* del */
+    tSerial.c_cc[VKILL]    = 0;     /* @ */
+    tSerial.c_cc[VEOF]     = 4;     /* Ctrl-d */
+    tSerial.c_cc[VTIME]    = 0;     /* inter-character timer unused */
+    tSerial.c_cc[VMIN]     = 1;     /* blocking read until 1 character arrives */
+    tSerial.c_cc[VSWTC]    = 0;     /* '\0' */
+    tSerial.c_cc[VSTART]   = 0;     /* Ctrl-q */
+    tSerial.c_cc[VSTOP]    = 0;     /* Ctrl-s */
+    tSerial.c_cc[VSUSP]    = 0;     /* Ctrl-z */
+    tSerial.c_cc[VEOL]     = 0;     /* '\0' */
+    tSerial.c_cc[VREPRINT] = 0;     /* Ctrl-r */
+    tSerial.c_cc[VDISCARD] = 0;     /* Ctrl-u */
+    tSerial.c_cc[VWERASE]  = 0;     /* Ctrl-w */
+    tSerial.c_cc[VLNEXT]   = 0;     /* Ctrl-v */
+    tSerial.c_cc[VEOL2]    = 0;     /* '\0' */
+
+    /*
+      now clean the modem line and activate the settings for the port
+    */
+    tcflush(nSerialPortFd, TCIFLUSH);
+    tcsetattr(nSerialPortFd, TCSANOW, &tSerial);
+
+    memset(&tSeqInfo, 0, sizeof(tSeqInfo));
+    if (prepareSeqInforForThread(&tSeqInfo) < 0){
+    	goto UART_HANDLER_EXIT;
+    }
+	printf("  Sequencer target port connected by UART handler.\n");
+
+	snd_seq_ev_clear(&tSndSeqEvent);
+	snd_seq_ev_set_source(&tSndSeqEvent, tSeqInfo.nMyPortID);
+	snd_seq_ev_set_subs(&tSndSeqEvent);
+	snd_seq_ev_set_direct(&tSndSeqEvent);
+	snd_seq_ev_set_fixed(&tSndSeqEvent);
+
+	memset(cBuff, 0, sizeof(cBuff));
+
+	while(0 == __io_canceled){
+		/* read blocks program execution until a line terminating character is
+		input, even if more than 255 chars are input. If the number
+		of characters read is smaller than the number of chars available,
+		subsequent reads will return the remaining chars. res will be set
+		to the actual number of characters actually read */
+		nReadByte = read(nSerialPortFd, cBuff, sizeof(cBuff));
+		if (nReadByte < 1){
+			break;
+		}
+		cBuff[sizeof(cBuff) - 1] = '\0';             /* set end of string, so we can printf */
+		printf(":%s:%d\n", cBuff, nReadByte);
+	}
+
+UART_HANDLER_EXIT:
+	if (tSeqInfo.pPorts != NULL){
+		free(tSeqInfo.pPorts);
+	}
+	if (tSeqInfo.nMyPortID >= 0){
+		snd_seq_delete_port(tSeqInfo.pSeq, tSeqInfo.nMyPortID);
+	}
+	if (tSeqInfo.pSeq != NULL){
+		snd_seq_close(tSeqInfo.pSeq);
+	}
+	return NULL;
+}
+
+void* BT_clientService(void* pSporeSocket)
 {
 //	struct sigaction tSignalAction;
 	int32_t nBytesRead;
 	snd_seq_event_t tSndSeqEvent;
-	snd_seq_t *pSeq = NULL;
-	int32_t nClientID;
-	int32_t nPortCount;
-	int32_t nMyPortID = 0;
-	snd_seq_addr_t *pPorts = NULL;
+	SeqForThread_t tSeqInfo;
 //	snd_seq_ev_note_t tNoteEvent;
 	char cBuff[NOTE_FRAME_LENGTH];
 	int32_t nNeedToReadByte;
@@ -195,41 +369,18 @@ static void* clientService(void* pSporeSocket)
 	int32_t nSporeSocket = *((int32_t*)pSporeSocket);
 //
 //	int32_t i;
-
-	nClientID = nInitSeq(&pSeq);
-	if ((nClientID < 0) || (NULL == pSeq)){
-		perror("Initialize sequencer failed.");
-		if (pSeq != NULL){
-			snd_seq_close(pSeq);
-		}
-		return NULL;	//exit(1);
-	}
-	printf("  Sequencer initialized by new BT connection.\n");
-
-	nPortCount = nParsePorts(cSndPort, &pPorts, pSeq);
-	if (nPortCount < 1) {
-		printf("  Please specify at least one port.\n");
-		goto RELEASE_SOCKET;
-	}
-	printf("  Sequencer ports parsed by new BT connection.\n");
-
-	nMyPortID = pCreateSourcePort(pSeq);
-	if (nMyPortID < 0){
-		goto RELEASE_SOCKET;
-	}
-	printf("  Sequencer source port created by new BT connection.\n");
-	if (nConnectPorts(pSeq, nPortCount, pPorts) < 0){
-		goto RELEASE_SOCKET;
-	}
+    if (prepareSeqInforForThread(&tSeqInfo) < 0){
+    	goto BT_HANDLER_EXIT;
+    }
 	printf("  Sequencer target port connected by new BT connection.\n");
 
 	snd_seq_ev_clear(&tSndSeqEvent);
-    snd_seq_ev_set_source(&tSndSeqEvent, nMyPortID);
+    snd_seq_ev_set_source(&tSndSeqEvent, tSeqInfo.nMyPortID);
     snd_seq_ev_set_subs(&tSndSeqEvent);
     snd_seq_ev_set_direct(&tSndSeqEvent);
 	snd_seq_ev_set_fixed(&tSndSeqEvent);
 
-	nPlayConnectedMidi(pSeq, nMyPortID);
+	nPlayConnectedMidi(tSeqInfo.pSeq, tSeqInfo.nMyPortID);
 
 	nNeedToReadByte = NOTE_FRAME_LENGTH;
 	memset(cBuff, 0, sizeof(cBuff));
@@ -237,7 +388,7 @@ static void* clientService(void* pSporeSocket)
 		nBytesRead = recv(nSporeSocket, cBuff + (NOTE_FRAME_LENGTH - nNeedToReadByte), nNeedToReadByte, 0);	//&tNoteEvent, sizeof(tNoteEvent), 0);
 		if(nBytesRead < 0){	//sizeof(snd_seq_event_t)) {
 			printf("  Received error with code %d.\n", errno);
-			goto RELEASE_SOCKET;
+			goto BT_HANDLER_EXIT;
 		}else if (0 == nBytesRead) {
 			perror("Received empty.");
 		}else{
@@ -252,35 +403,26 @@ static void* clientService(void* pSporeSocket)
 
 			if (0 == nNeedToReadByte){
 				printf("  BT received: %s\n", cBuff);
-				for (nIndex = 0; nIndex < NOTE_FRAME_DATA_NUMBER; nIndex++)
-				    sscanf(cBuff + nIndex * 2, "%2hhx", unNoteData + nIndex);
-				printf("  Type is: %u, Channel is: %u, Note is: %u, velocity is: %u.\n",
-						unNoteData[0], unNoteData[1], unNoteData[2], unNoteData[3]);
-				tSndSeqEvent.type = unNoteData[0];
-				tSndSeqEvent.data.note.channel = unNoteData[1];
-				tSndSeqEvent.data.note.note = unNoteData[2];
-//				pthread_mutex_lock(&tMidiAttrMutex);
-				tSndSeqEvent.data.note.velocity = unNoteData[3];	//tMidiPara.nVolume;
-//				pthread_mutex_unlock(&tMidiAttrMutex);
-				snd_seq_event_output(pSeq, &tSndSeqEvent);
-				snd_seq_drain_output(pSeq);
+				generateEventContent(&tSndSeqEvent, cBuff);
+				snd_seq_event_output(tSeqInfo.pSeq, &tSndSeqEvent);
+				snd_seq_drain_output(tSeqInfo.pSeq);
 				nNeedToReadByte = NOTE_FRAME_LENGTH;
 				memset(cBuff, 0, sizeof(cBuff));
 			}
 		}
 	}
 
-RELEASE_SOCKET:
+BT_HANDLER_EXIT:
 	close(nSporeSocket);
 	setSocketSlotFree(nSocketList, MAX_CLIENT_SOCKET_CNT, nSporeSocket);
-	if (pPorts != NULL){
-		free(pPorts);
+	if (tSeqInfo.pPorts != NULL){
+		free(tSeqInfo.pPorts);
 	}
-	if (nMyPortID >= 0){
-		snd_seq_delete_port(pSeq, nMyPortID);
+	if (tSeqInfo.nMyPortID >= 0){
+		snd_seq_delete_port(tSeqInfo.pSeq, tSeqInfo.nMyPortID);
 	}
-	if (pSeq != NULL){
-		snd_seq_close(pSeq);
+	if (tSeqInfo.pSeq != NULL){
+		snd_seq_close(tSeqInfo.pSeq);
 	}
 	return NULL;
 //	exit(0);
@@ -544,7 +686,7 @@ int32_t main(int32_t argc, char *argv[])
 {
 	struct sigaction tSignalAction;
 	static pthread_t tThreadList[MAX_CLIENT_SOCKET_CNT];
-	static pthread_t updateMidiAttrThread;
+	static pthread_t tUpdateMidiAttrThread, tUART_Thread;
 	int32_t nFreeSocketSlot;
 	int32_t nRSTL;
 	pthread_attr_t tAttr;
@@ -593,7 +735,7 @@ int32_t main(int32_t argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	nRSTL = pthread_create(&updateMidiAttrThread, &tAttr, updateMidiAttr, NULL);
+	nRSTL = pthread_create(&tUpdateMidiAttrThread, &tAttr, updateMidiAttr, NULL);
 	if(nRSTL)
 	{
 		perror("Start update midi attribute thread failed.");
@@ -654,6 +796,14 @@ int32_t main(int32_t argc, char *argv[])
 	}
 	// midi ready
 
+	// Spore serial receiver
+	nRSTL = pthread_create(&tUART_Thread, &tAttr, UART_clientService, "/dev/ttyS1");
+	if(nRSTL){
+		perror("Start serial port handler thread failed.");
+		exit(EXIT_FAILURE);
+	}
+
+	// Prepare bluetooth connection
 	tLocalAddr.rc_family = AF_BLUETOOTH;
 	bacpy(&tLocalAddr.rc_bdaddr, BDADDR_ANY);
 	tLocalAddr.rc_channel = 1;	//(argc < 2) ? 1 : atoi(argv[1]);
@@ -688,11 +838,11 @@ int32_t main(int32_t argc, char *argv[])
 			continue;
 		}
 		nSocketList[nFreeSocketSlot] = nSporeSocket;
-		nRSTL = pthread_create(tThreadList + nFreeSocketSlot, &tAttr, clientService, &nSporeSocket);
+		nRSTL = pthread_create(tThreadList + nFreeSocketSlot, &tAttr, BT_clientService, &nSporeSocket);
 		if(nRSTL)
 		{
 			close(nServerSocket);
-			kill(getpid(), SIGINT);
+//			kill(getpid(), SIGINT);
 			perror("Create thread failed.");
 			erroExitHandler(pSeq, pPorts, nMyPortID);
 		}
