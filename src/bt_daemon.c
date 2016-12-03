@@ -55,7 +55,7 @@
 #define MAX_CLIENT_SOCKET_CNT			10
 #define NOTE_FRAME_LENGTH				sizeof("0601AE2C")	// type+channel+note+velocity
 #define NOTE_FRAME_DATA_NUMBER			((NOTE_FRAME_LENGTH - 1)/2)
-#define NOTE_FRAME_END_SYMBOL			'\0'
+#define NOTE_FRAME_END_SYMBOL			'\n'
 #define EMPTY_PID						((pid_t)0)
 #define EMPTY_TID						((pthread_t)0)
 #define EMPTY_SOCKET					((int32_t)0)
@@ -188,11 +188,11 @@ typedef struct{
 
 int32_t prepareSeqInforForThread(SeqForThread_t* pSeqInfor)
 {
-	pSeqInfor->nClientID = nInitSeq(&pSeq);
+	pSeqInfor->nClientID = nInitSeq(&(pSeqInfor->pSeq));
 	if ((pSeqInfor->nClientID < 0) || (NULL == pSeqInfor->pSeq)){
 		perror("Initialize sequencer failed.");
 		if (pSeqInfor->pSeq != NULL){
-			snd_seq_close(pSeq);
+			snd_seq_close(pSeqInfor->pSeq);
 		}
 		return(-1);
 	}
@@ -234,22 +234,78 @@ int32_t generateEventContent(snd_seq_event_t* pSndSeqEvent, char* pEventString)
 	return 0;
 }
 
+struct termios tGetUART_Config(void)
+{
+	struct termios tSerialTemp;
+
+	memset(&tSerialTemp, 0, sizeof(tSerialTemp));
+	/*
+	  BAUDRATE: Set bps rate. You could also use cfsetispeed and cfsetospeed.
+	  CS8     : 8n1 (8bit,no parity,1 stopbit)
+	  CLOCAL  : local connection, no modem contol
+	  CREAD   : enable receiving characters
+	*/
+	tSerialTemp.c_cflag = SERIAL_PORT_BAUDRATE | CS8 | CLOCAL | CREAD;
+
+	/*
+	  IGNPAR  : ignore bytes with parity errors
+	  ICRNL   : map CR to NL (otherwise a CR input on the other computer
+				will not terminate input)
+	  otherwise make device raw (no other input processing)
+	*/
+	tSerialTemp.c_iflag = IGNPAR | ICRNL;
+
+	/*
+	 Raw output.
+	*/
+	tSerialTemp.c_oflag = 0;
+
+	/*
+	  ICANON  : enable canonical input
+	  disable all echo functionality, and don't send signals to calling program
+	*/
+	tSerialTemp.c_lflag = ICANON;
+
+	/*
+	  initialize all control characters
+	  default values can be found in /usr/include/termios.h, and are given
+	  in the comments, but we don't need them here
+	*/
+	tSerialTemp.c_cc[VINTR]    = 0;     /* Ctrl-c */
+	tSerialTemp.c_cc[VQUIT]    = 0;     /* Ctrl-\ */
+	tSerialTemp.c_cc[VERASE]   = 0;     /* del */
+	tSerialTemp.c_cc[VKILL]    = 0;     /* @ */
+	tSerialTemp.c_cc[VEOF]     = 4;     /* Ctrl-d */
+	tSerialTemp.c_cc[VTIME]    = 0;     /* inter-character timer unused */
+	tSerialTemp.c_cc[VMIN]     = 1;     /* blocking read until 1 character arrives */
+	tSerialTemp.c_cc[VSWTC]    = 0;     /* '\0' */
+	tSerialTemp.c_cc[VSTART]   = 0;     /* Ctrl-q */
+	tSerialTemp.c_cc[VSTOP]    = 0;     /* Ctrl-s */
+	tSerialTemp.c_cc[VSUSP]    = 0;     /* Ctrl-z */
+	tSerialTemp.c_cc[VEOL]     = 0;     /* '\0' */
+	tSerialTemp.c_cc[VREPRINT] = 0;     /* Ctrl-r */
+	tSerialTemp.c_cc[VDISCARD] = 0;     /* Ctrl-u */
+	tSerialTemp.c_cc[VWERASE]  = 0;     /* Ctrl-w */
+	tSerialTemp.c_cc[VLNEXT]   = 0;     /* Ctrl-v */
+	tSerialTemp.c_cc[VEOL2]    = 0;     /* '\0' */
+
+	return tSerialTemp;
+}
+
 void* UART_clientService(void* pSerialPort)
 {
 	int32_t nBytesRead;
 	snd_seq_event_t tSndSeqEvent;
 	SeqForThread_t tSeqInfo;
 	char cBuff[NOTE_FRAME_LENGTH];
-	int32_t nReadByte;
-	int32_t nIndex;
-	uint8_t unNoteData[NOTE_FRAME_DATA_NUMBER];
 	int32_t nSerialPortFd;
 	struct termios tSerial;
 
-	nSerialPortFd = open(pSerialPort, O_RDWR | O_NOCTTY | O_NDELAY);
+	printf("  Start to monitor port %s.\n", (char *)pSerialPort);
+	nSerialPortFd = open(pSerialPort, O_RDWR | O_NOCTTY);
 
     if (nSerialPortFd < 0) {
-    	perror("Open serial port failed.");
+    	perror("Open serial port failed");
         return NULL;
     }
 
@@ -257,56 +313,7 @@ void* UART_clientService(void* pSerialPort)
 //        perror("Getting serial configuration failed");
 //        return NULL;
 //    }
-    memset(&tSerial, 0, sizeof(tSerial));
-    /*
-      BAUDRATE: Set bps rate. You could also use cfsetispeed and cfsetospeed.
-      CS8     : 8n1 (8bit,no parity,1 stopbit)
-      CLOCAL  : local connection, no modem contol
-      CREAD   : enable receiving characters
-    */
-    tSerial.c_cflag = SERIAL_PORT_BAUDRATE | CS8 | CLOCAL | CREAD;
-
-    /*
-      IGNPAR  : ignore bytes with parity errors
-      ICRNL   : map CR to NL (otherwise a CR input on the other computer
-                will not terminate input)
-      otherwise make device raw (no other input processing)
-    */
-    tSerial.c_iflag = IGNPAR | ICRNL;
-
-    /*
-     Raw output.
-    */
-    tSerial.c_oflag = 0;
-
-    /*
-      ICANON  : enable canonical input
-      disable all echo functionality, and don't send signals to calling program
-    */
-    tSerial.c_lflag = ICANON;
-
-    /*
-      initialize all control characters
-      default values can be found in /usr/include/termios.h, and are given
-      in the comments, but we don't need them here
-    */
-    tSerial.c_cc[VINTR]    = 0;     /* Ctrl-c */
-    tSerial.c_cc[VQUIT]    = 0;     /* Ctrl-\ */
-    tSerial.c_cc[VERASE]   = 0;     /* del */
-    tSerial.c_cc[VKILL]    = 0;     /* @ */
-    tSerial.c_cc[VEOF]     = 4;     /* Ctrl-d */
-    tSerial.c_cc[VTIME]    = 0;     /* inter-character timer unused */
-    tSerial.c_cc[VMIN]     = 1;     /* blocking read until 1 character arrives */
-    tSerial.c_cc[VSWTC]    = 0;     /* '\0' */
-    tSerial.c_cc[VSTART]   = 0;     /* Ctrl-q */
-    tSerial.c_cc[VSTOP]    = 0;     /* Ctrl-s */
-    tSerial.c_cc[VSUSP]    = 0;     /* Ctrl-z */
-    tSerial.c_cc[VEOL]     = 0;     /* '\0' */
-    tSerial.c_cc[VREPRINT] = 0;     /* Ctrl-r */
-    tSerial.c_cc[VDISCARD] = 0;     /* Ctrl-u */
-    tSerial.c_cc[VWERASE]  = 0;     /* Ctrl-w */
-    tSerial.c_cc[VLNEXT]   = 0;     /* Ctrl-v */
-    tSerial.c_cc[VEOL2]    = 0;     /* '\0' */
+    tSerial = tGetUART_Config();
 
     /*
       now clean the modem line and activate the settings for the port
@@ -334,14 +341,19 @@ void* UART_clientService(void* pSerialPort)
 		of characters read is smaller than the number of chars available,
 		subsequent reads will return the remaining chars. res will be set
 		to the actual number of characters actually read */
-		nReadByte = read(nSerialPortFd, cBuff, sizeof(cBuff));
-		if (nReadByte < 1){
+		nBytesRead = read(nSerialPortFd, cBuff, sizeof(cBuff));
+		if (nBytesRead < 0){
+			printf("Read serial port failed with error number %d.\n", errno);
+			perror("Read serial port failed");
 			break;
 		}
 		cBuff[sizeof(cBuff) - 1] = '\0';             /* set end of string, so we can printf */
-		printf(":%s:%d\n", cBuff, nReadByte);
+//		printf(":%s:%d\n", cBuff, nBytesRead);
+		generateEventContent(&tSndSeqEvent, cBuff);
+		snd_seq_event_output(tSeqInfo.pSeq, &tSndSeqEvent);
+		snd_seq_drain_output(tSeqInfo.pSeq);
 	}
-
+	printf("  UART handler end.\n");
 UART_HANDLER_EXIT:
 	if (tSeqInfo.pPorts != NULL){
 		free(tSeqInfo.pPorts);
@@ -364,8 +376,6 @@ void* BT_clientService(void* pSporeSocket)
 //	snd_seq_ev_note_t tNoteEvent;
 	char cBuff[NOTE_FRAME_LENGTH];
 	int32_t nNeedToReadByte;
-	int32_t nIndex;
-	uint8_t unNoteData[NOTE_FRAME_DATA_NUMBER];
 	int32_t nSporeSocket = *((int32_t*)pSporeSocket);
 //
 //	int32_t i;
