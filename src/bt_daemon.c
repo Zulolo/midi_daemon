@@ -241,11 +241,11 @@ struct termios tGetUART_Config(void)
 	memset(&tSerialTemp, 0, sizeof(tSerialTemp));
 	/*
 	  BAUDRATE: Set bps rate. You could also use cfsetispeed and cfsetospeed.
-	  CS8     : 8n1 (8bit,no parity,1 stopbit)
+	  CS8     : 8o1 (8bit,odd parity,1 stop bit)
 	  CLOCAL  : local connection, no modem contol
 	  CREAD   : enable receiving characters
 	*/
-	tSerialTemp.c_cflag = SERIAL_PORT_BAUDRATE | CS8 | CLOCAL | CREAD;
+	tSerialTemp.c_cflag = SERIAL_PORT_BAUDRATE | CS8 | PARENB | PARODD | CLOCAL | CREAD;
 
 	/*
 	  IGNPAR  : ignore bytes with parity errors
@@ -348,7 +348,7 @@ void* UART_clientService(void* pSerialPort)
 			break;
 		}
 		cBuff[sizeof(cBuff) - 1] = '\0';             /* set end of string, so we can printf */
-//		printf(":%s:%d\n", cBuff, nBytesRead);
+		printf(":%s:%d\n", cBuff, nBytesRead);
 		generateEventContent(&tSndSeqEvent, cBuff);
 		snd_seq_event_output(tSeqInfo.pSeq, &tSndSeqEvent);
 		snd_seq_drain_output(tSeqInfo.pSeq);
